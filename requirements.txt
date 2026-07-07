@@ -3,3 +3,4 @@ openai>=1.0
 supabase>=2.0
 python-dotenv>=1.0
 gunicorn
+requests
