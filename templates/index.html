@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>智能助理</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, 'Helvetica Neue', sans-serif; }
+        body { background: #ededed; height: 100vh; display: flex; flex-direction: column; }
+
+        /* 顶部导航 */
+        .header { background: #4a90d9; color: white; padding: 15px 20px; text-align: center; font-size: 20px; font-weight: 600; flex-shrink: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); position: relative; display: flex; justify-content: center; align-items: center; }
+        .header-title { flex: 1; text-align: center; }
+        .header-btn { background: rgba(255,255,255,0.25); color: white; border: 1px solid rgba(255,255,255,0.4); border-radius: 16px; padding: 6px 14px; font-size: 13px; cursor: pointer; transition: background 0.2s; white-space: nowrap; margin-left: 8px; min-height: 44px; display: flex; align-items: center; }
+        .header-btn:active { background: rgba(255,255,255,0.4); }
+
+        /* 聊天区 */
+        .chat-box { flex: 1; overflow-y: auto; padding: 15px 12px; display: flex; flex-direction: column; gap: 10px; background: #ededed; }
+        .message { max-width: 80%; padding: 10px 14px; border-radius: 18px; word-wrap: break-word; line-height: 1.6; font-size: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); animation: fadeIn 0.2s ease; white-space: pre-wrap; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        .message.user { align-self: flex-end; background: #95ec69; color: #000; border-bottom-right-radius: 4px; }
+        .message.ai { align-self: flex-start; background: #ffffff; color: #000; border-bottom-left-radius: 4px; }
+        .message-time { font-size: 11px; color: #999; margin-top: 4px; text-align: right; }
+        .message.ai .message-time { text-align: left; }
+
+        /* 快捷按钮 */
+        .quick-buttons { display: flex; padding: 8px 12px 0 12px; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+        .quick-buttons button { padding: 6px 14px; background: #ffffff; color: #4a90d9; border: 1px solid #4a90d9; border-radius: 20px; font-size: 14px; cursor: pointer; transition: all 0.2s; white-space: nowrap; min-height: 44px; }
+        .quick-buttons button:active { background: #4a90d9; color: #fff; }
+        .quick-buttons button.voice-btn { opacity: 0.4; cursor: not-allowed; border-color: #ccc; color: #ccc; }
+
+        /* 输入区 */
+        .time-hint { padding: 4px 16px 0 16px; font-size: 12px; color: #aaa; flex-shrink: 0; }
+        .input-area { display: flex; padding: 10px 12px; background: #f7f7f7; border-top: 1px solid #ddd; flex-shrink: 0; gap: 8px; align-items: flex-end; }
+        .input-area textarea { flex: 1; padding: 10px 14px; border: 1px solid #ccc; border-radius: 25px; font-size: 16px; outline: none; background: white; resize: none; max-height: 120px; line-height: 1.4; font-family: inherit; overflow-y: auto; }
+        .input-area textarea:focus { border-color: #4a90d9; }
+        .input-area button { padding: 10px 20px; background: #4a90d9; color: white; border: none; border-radius: 25px; font-size: 16px; font-weight: 500; cursor: pointer; transition: background 0.2s; white-space: nowrap; align-self: flex-end; min-height: 44px; }
+        .input-area button:active { background: #3a7bc8; }
+        .input-area button:disabled { background: #a0c4e8; cursor: not-allowed; }
+
+        .loading { font-size: 14px; color: #888; text-align: center; padding: 4px 0; animation: pulse 1.5s ease-in-out infinite; }
+        @keyframes pulse { 0%,100%{opacity:0.5} 50%{opacity:1} }
+        .message.ai.overdue-warning { background: #fff3f3; border: 1px solid #ff6b6b; color: #d63031; font-weight: 500; }
+
+        /* ========== 看板样式 ========== */
+        .kanban-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #f0f2f5; z-index: 200; flex-direction: column; }
+        .kanban-overlay.active { display: flex; }
+
+        /* 看板顶部栏 */
+        .kanban-topbar { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: #fff; border-bottom: 1px solid #e0e0e0; flex-shrink: 0; flex-wrap: wrap; }
+        .kanban-topbar .close-btn { background: none; border: none; font-size: 24px; cursor: pointer; color: #666; padding: 8px; min-height: 44px; min-width: 44px; line-height: 1; }
+        .kanban-topbar .identity-input { flex: 1; min-width: 100px; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 15px; outline: none; }
+        .kanban-topbar .identity-btn { padding: 8px 16px; background: #4a90d9; color: #fff; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; min-height: 44px; white-space: nowrap; }
+        .kanban-topbar .notify-bell { position: relative; background: none; border: none; font-size: 24px; cursor: pointer; padding: 8px; min-height: 44px; min-width: 44px; }
+        .notify-badge { position: absolute; top: 2px; right: 2px; background: #e74c3c; color: #fff; border-radius: 10px; padding: 1px 6px; font-size: 11px; font-weight: 700; min-width: 18px; text-align: center; display: none; }
+        .notify-badge.show { display: block; }
+
+        /* 通知下拉 */
+        .notify-dropdown { display: none; position: absolute; top: 100%; right: 0; width: 300px; max-height: 350px; overflow-y: auto; background: #fff; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); z-index: 300; padding: 8px 0; }
+        .notify-dropdown.open { display: block; }
+        .notify-item { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; font-size: 14px; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+        .notify-item:last-child { border-bottom: none; }
+        .notify-item .mark-read { background: #e8f0fe; color: #4a90d9; border: none; border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; min-height: 36px; }
+        .notify-dropdown .read-all { display: block; width: 100%; padding: 10px; background: #f5f7fa; border: none; color: #4a90d9; font-size: 13px; cursor: pointer; min-height: 44px; }
+        .notify-empty { padding: 20px; text-align: center; color: #999; font-size: 14px; }
+
+        /* 看板卡片区 */
+        .kanban-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-wrap: wrap; gap: 12px; align-content: flex-start; }
+        .task-card { background: #fff; border-radius: 12px; padding: 14px; width: 100%; max-width: 400px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid #4a90d9; position: relative; transition: transform 0.15s; }
+        .task-card:active { transform: scale(0.98); }
+        .task-card.overdue { border-left-color: #e74c3c; border: 2px solid #e74c3c; border-left-width: 5px; background: #fff5f5; }
+        .task-card.overdue .card-action { color: #c62828; }
+        .task-card.done { opacity: 0.7; border-left-color: #27ae60; }
+        .card-overdue-tag { display: none; position: absolute; top: 8px; right: 8px; background: #e74c3c; color: #fff; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+        .task-card.overdue .card-overdue-tag { display: block; }
+        .card-name { font-size: 13px; color: #888; margin-bottom: 2px; }
+        .card-action { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: #222; }
+        .card-status { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: 500; margin-bottom: 6px; }
+        .stat-todo { background: #fff3e0; color: #e65100; }
+        .stat-done { background: #e8f5e9; color: #2e7d32; }
+        .stat-progress { background: #e3f2fd; color: #1565c0; }
+        .card-deadline { font-size: 13px; color: #666; margin-bottom: 4px; }
+        .card-overdue-info { display: none; font-size: 12px; color: #c62828; font-weight: 600; margin-bottom: 4px; }
+        .task-card.overdue .card-overdue-info { display: block; }
+        .card-actions { display: flex; gap: 8px; margin-top: 8px; }
+        .card-btn { flex: 1; padding: 8px 0; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; min-height: 44px; transition: opacity 0.2s; }
+        .card-btn:active { opacity: 0.7; }
+        .btn-complete { background: #e8f5e9; color: #2e7d32; }
+        .btn-remind { background: #fff3e0; color: #e65100; }
+        .card-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .kanban-empty { width: 100%; text-align: center; color: #999; padding: 60px 20px; font-size: 16px; }
+
+        /* Toast */
+        .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 12px 24px; border-radius: 10px; font-size: 15px; z-index: 400; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+        .toast.show { opacity: 1; }
+        .toast.green { background: #27ae60; }
+
+        /* 身份选择弹窗 */
+        .identity-modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 500; justify-content: center; align-items: center; }
+        .identity-modal-overlay.active { display: flex; }
+        .identity-modal { background: #fff; border-radius: 16px; padding: 30px 24px; width: 88vw; max-width: 380px; text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,0.25); animation: modalIn 0.25s ease; }
+        @keyframes modalIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+        .identity-modal h2 { font-size: 20px; margin-bottom: 6px; color: #222; }
+        .identity-modal p { font-size: 14px; color: #888; margin-bottom: 20px; }
+        .identity-modal input { width: 100%; padding: 12px 16px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 17px; outline: none; text-align: center; box-sizing: border-box; }
+        .identity-modal input:focus { border-color: #4a90d9; }
+        .identity-modal .confirm-btn { margin-top: 16px; width: 100%; padding: 12px; background: #4a90d9; color: #fff; border: none; border-radius: 10px; font-size: 17px; cursor: pointer; min-height: 48px; }
+        .identity-modal .confirm-btn:active { background: #3a7bc8; }
+        .identity-modal .error-msg { color: #e74c3c; font-size: 13px; margin-top: 8px; display: none; }
+        .identity-modal .logout-link { display: block; margin-top: 14px; font-size: 13px; color: #999; cursor: pointer; background: none; border: none; text-decoration: underline; }
+
+        /* 身份标签 */
+        .user-tag { display: flex; align-items: center; gap: 4px; background: rgba(255,255,255,0.2); color: #fff; border-radius: 16px; padding: 5px 12px; font-size: 13px; cursor: pointer; min-height: 44px; white-space: nowrap; }
+        .user-tag:active { background: rgba(255,255,255,0.35); }
+
+        /* 可见性选择器 */
+        .visibility-bar { display: flex; padding: 6px 12px 0 12px; gap: 8px; flex-shrink: 0; align-items: center; flex-wrap: wrap; }
+        .vis-option { padding: 5px 12px; border-radius: 16px; font-size: 13px; cursor: pointer; border: 1.5px solid #ddd; background: #fff; color: #666; min-height: 40px; transition: all 0.2s; }
+        .vis-option.active { border-color: #4a90d9; background: #e8f0fe; color: #4a90d9; font-weight: 600; }
+        .user-picker { display: none; padding: 4px 12px 0 12px; flex-shrink: 0; flex-wrap: wrap; gap: 4px; }
+        .user-picker.show { display: flex; }
+        .user-chip { padding: 4px 10px; border-radius: 12px; font-size: 12px; cursor: pointer; border: 1px solid #ddd; background: #fff; color: #555; min-height: 36px; display: flex; align-items: center; gap: 4px; }
+        .user-chip.checked { background: #e8f0fe; border-color: #4a90d9; color: #4a90d9; font-weight: 600; }
+        .vis-tag { display: inline-block; padding: 1px 6px; border-radius: 6px; font-size: 11px; margin-left: 4px; }
+        .vis-public { background: #e8f5e9; color: #2e7d32; }
+        .vis-private { background: #e3f2fd; color: #1565c0; }
+    </style>
+</head>
+<body>
+
+    <!-- 顶部导航 -->
+    <div class="header">
+        <span class="header-title">🤖 智能助理</span>
+        <span class="user-tag" id="userTag" title="点击打开菜单" style="display:none;">👤 <span id="userTagName"></span></span>
+        <button class="header-btn" id="adminUsersTopBtn" style="display:none;" title="用户管理">⚙️ 用户管理</button>
+        <button class="header-btn" id="kanbanBtn">📋 任务看板</button>
+    </div>
+
+    <!-- 聊天区域 -->
+    <div class="chat-box" id="chatBox">
+        <div class="message ai">👋 你好！输入任务描述或查询问题，我会帮你处理。<div class="message-time">现在</div></div>
+    </div>
+
+    <!-- 快捷按钮 -->
+    <div class="quick-buttons">
+        <button onclick="quickSend('显示所有未完成的任务')">📋 未完成</button>
+        <button onclick="quickSend('显示所有已完成的任务')">✅ 已完成</button>
+        <button onclick="quickSend('今天有哪些任务')">📅 今日任务</button>
+        <button class="voice-btn" disabled title="语音输入即将上线">🎤 语音</button>
+    </div>
+
+    <!-- 任务可见性选择器 -->
+    <div class="visibility-bar" id="visibilityBar">
+        <span class="vis-option active" data-vis="public" onclick="setVisibility('public')">🌐 公共任务</span>
+        <span class="vis-option" data-vis="private" onclick="setVisibility('private')">👥 指定人员</span>
+    </div>
+    <div class="user-picker" id="userPicker"></div>
+
+    <!-- 输入提示 -->
+    <div class="time-hint">💡 支持时间描述，如"今晚十点"、"明天下午"、"本周五前"</div>
+
+    <!-- 输入区 -->
+    <div class="input-area">
+        <textarea id="msgInput" rows="1" placeholder="输入文字..." autocomplete="off"></textarea>
+        <button id="sendBtn">发送</button>
+    </div>
+
+    <!-- ==================== 快速布置任务弹窗 ==================== -->
+    <div class="identity-modal-overlay" id="quickTaskModal">
+        <div class="identity-modal" style="text-align:left;">
+            <h2 style="text-align:center;">➕ 快速布置任务</h2>
+            <label style="font-size:13px;color:#888;">任务内容</label>
+            <input type="text" id="qtContent" placeholder="输入任务描述..." autocomplete="off" style="margin-bottom:8px;">
+            <label style="font-size:13px;color:#888;">负责人</label>
+            <input type="text" id="qtName" placeholder="输入负责人姓名..." autocomplete="off" style="margin-bottom:8px;">
+            <label style="font-size:13px;color:#888;">截止时间</label>
+            <input type="datetime-local" id="qtDeadline" style="margin-bottom:8px;width:100%;padding:10px;border:1.5px solid #ddd;border-radius:10px;font-size:15px;box-sizing:border-box;">
+            <label style="font-size:13px;color:#888;">可见性</label>
+            <select id="qtVisibility" style="margin-bottom:12px;width:100%;padding:10px;border:1.5px solid #ddd;border-radius:10px;font-size:15px;box-sizing:border-box;">
+                <option value="public">🌐 公共任务</option>
+                <option value="private">👥 指定人员</option>
+            </select>
+            <div class="error-msg" id="qtError"></div>
+            <button class="confirm-btn" id="qtConfirm">确认布置</button>
+            <button class="logout-link" onclick="document.getElementById('quickTaskModal').classList.remove('active');" style="display:block;">取消</button>
+        </div>
+    </div>
+
+    <!-- ==================== 任务看板（全屏遮罩） ==================== -->
+    <div class="kanban-overlay" id="kanbanOverlay">
+        <div class="kanban-topbar">
+            <button class="close-btn" id="kanbanClose" title="关闭看板">&times;</button>
+            <button id="quickTaskBtn" title="快速布置任务" style="padding:6px 14px;background:#27ae60;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;min-height:40px;white-space:nowrap;">➕ 布置任务</button>
+            <span style="font-size:15px;font-weight:600;">📋 任务看板</span>
+            <input id="kanbanSearch" placeholder="🔍 搜索姓名/任务/日期..." oninput="debounceLoadKanban()" style="flex:1;min-width:120px;max-width:200px;padding:6px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;outline:none;margin:0 4px;">
+            <span id="kanbanTaskControls">
+            <select id="kanbanViewToggle" onchange="toggleKanbanView()" style="padding:6px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;min-height:40px;background:#fff;">
+                <option value="all">全部任务</option>
+                <option value="mine">我的任务</option>
+            </select>
+            <span style="color:#888;font-size:14px;font-weight:600;" id="identityLabel">全部任务</span>
+            <select id="sortSelect" onchange="loadKanban()" style="margin-left:8px;padding:6px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;min-height:40px;background:#fff;">
+                <option value="default">智能排序</option>
+                <option value="time">时间排序</option>
+            </select>
+            </span>
+            <div style="margin-left:auto;position:relative;">
+                <button class="notify-bell" id="notifyBell" title="通知中心">🔔<span class="notify-badge" id="notifyBadge">0</span></button>
+                <div class="notify-dropdown" id="notifyDropdown">
+                    <div class="notify-empty">暂无未读通知</div>
+                </div>
+            </div>
+        </div>
+        <div class="kanban-body" id="kanbanBody">
+            <div class="kanban-empty">加载中...</div>
+        </div>
+    </div>
+
+    <!-- ==================== 用户管理面板（独立容器，全屏遮罩） ==================== -->
+    <div class="kanban-overlay" id="adminOverlay">
+        <div class="kanban-topbar">
+            <button class="close-btn" id="adminClose" title="关闭">&times;</button>
+            <span style="font-size:15px;font-weight:600;">⚙️ 用户管理</span>
+            <button onclick="closeAdminPanel()" style="margin-left:auto;padding:6px 14px;background:#eee;color:#666;border:none;border-radius:8px;font-size:13px;cursor:pointer;min-height:40px;">返回看板</button>
+        </div>
+        <div class="kanban-body" id="adminBody">
+            <div class="kanban-empty">加载中...</div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <!-- ==================== 登录弹窗（含小组选择） ==================== -->
+    <div class="identity-modal-overlay" id="identityModal">
+        <div class="identity-modal">
+            <h2>👋 欢迎使用任务助理</h2>
+            <!-- 步骤1: 输入小组名 -->
+            <div id="loginStep1">
+                <input type="text" id="teamNameInput" placeholder="输入小组名（如：默认小组）" autocomplete="off" style="margin-bottom:8px;">
+                <div class="error-msg" id="teamError"></div>
+                <button class="confirm-btn" id="teamCheckBtn">查询小组</button>
+            </div>
+            <!-- 步骤2: 选择成员或创建新用户 -->
+            <div id="loginStep2" style="display:none;">
+                <div id="memberList" style="margin-bottom:8px;text-align:left;max-height:150px;overflow-y:auto;"></div>
+                <input type="text" id="identityModalInput" placeholder="输入姓名..." autocomplete="off" style="margin-bottom:8px;">
+                <input type="password" id="identityModalPassword" placeholder="输入密码..." autocomplete="off" style="margin-bottom:4px;">
+                <div class="error-msg" id="identityModalError"></div>
+                <button class="confirm-btn" id="identityModalConfirm">登录</button>
+                <div style="margin-top:10px;display:flex;justify-content:space-between;">
+                    <a href="javascript:void(0)" onclick="showForgotPwModal()" style="font-size:13px;color:#999;">忘记密码？</a>
+                    <a href="javascript:void(0)" id="identityModalLogout" style="display:none;font-size:13px;color:#e74c3c;">退出登录</a>
+                    <a href="javascript:void(0)" onclick="resetLoginSteps()" style="font-size:13px;color:#999;">更换小组</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 忘记密码弹窗 ==================== -->
+    <div class="identity-modal-overlay" id="forgotPwModal">
+        <div class="identity-modal">
+            <h2>🔑 找回密码</h2>
+            <p style="font-size:13px;color:#888;margin-bottom:12px;">通过密保答案重置密码为 123456</p>
+            <input type="text" id="forgotPwName" placeholder="输入你的姓名（自动查询密保）..." autocomplete="off" style="margin-bottom:8px;">
+            <div id="forgotPwQuestionDisplay" style="display:none;font-size:14px;color:#333;margin-bottom:8px;padding:8px;background:#f5f7fa;border-radius:6px;text-align:left;"></div>
+            <input type="text" id="forgotPwAnswer" placeholder="输入密保答案..." autocomplete="off" style="margin-bottom:4px;">
+            <div class="error-msg" id="forgotPwError"></div>
+            <button class="confirm-btn" id="forgotPwConfirm">验证并重置</button>
+            <button class="logout-link" onclick="document.getElementById('forgotPwModal').classList.remove('active');" style="display:block;">返回登录</button>
+        </div>
+    </div>
+
+    <!-- ==================== 设置密保弹窗 ==================== -->
+    <div class="identity-modal-overlay" id="securityModal">
+        <div class="identity-modal">
+            <h2>🔒 设置密保问题</h2>
+            <p style="font-size:13px;color:#888;margin-bottom:12px;">首次登录需要设置密保，用于找回密码</p>
+            <input type="text" id="securityQuestion" placeholder="密保问题（如：你的小学名称）" autocomplete="off" style="margin-bottom:8px;">
+            <input type="text" id="securityAnswer" placeholder="密保答案" autocomplete="off" style="margin-bottom:4px;">
+            <div class="error-msg" id="securityError"></div>
+            <button class="confirm-btn" id="securityConfirm">保存</button>
+        </div>
+    </div>
+
+    <!-- ==================== 修改密码弹窗 ==================== -->
+    <div class="identity-modal-overlay" id="changePwModal">
+        <div class="identity-modal">
+            <h2>🔐 修改密码</h2>
+            <input type="password" id="changePwOld" placeholder="旧密码" autocomplete="off" style="margin-bottom:8px;">
+            <input type="password" id="changePwNew" placeholder="新密码" autocomplete="off" style="margin-bottom:8px;">
+            <input type="password" id="changePwConfirm" placeholder="确认新密码" autocomplete="off" style="margin-bottom:4px;">
+            <div class="error-msg" id="changePwError"></div>
+            <button class="confirm-btn" id="changePwConfirmBtn">确认修改</button>
+            <button class="logout-link" onclick="document.getElementById('changePwModal').classList.remove('active');" style="display:block;">取消</button>
+        </div>
+    </div>
+
+    <!-- ==================== JS ==================== -->
+    <script>
+        // ========== 聊天功能（保持不变） ==========
+        const chatBox = document.getElementById('chatBox');
+        const msgInput = document.getElementById('msgInput');
+        const sendBtn = document.getElementById('sendBtn');
+        let isLoading = false, lastAiMessage = '', pendingOpId = '';
+
+        function getTimeString() {
+            return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        }
+        function appendMessage(text, type) {
+            const div = document.createElement('div');
+            div.className = `message ${type}`;
+            // 超时任务行标红
+            if (text.includes('【已超时】')) {
+                let html = '';
+                text.split('\n').forEach(line => {
+                    line = escHtml(line);
+                    if (line.includes('【已超时】')) {
+                        html += `<span style="color:#c62828;font-weight:600;">${line}</span><br>`;
+                    } else {
+                        html += line + '<br>';
+                    }
+                });
+                div.innerHTML = html;
+            } else {
+                const s = document.createElement('span'); s.textContent = text; div.appendChild(s);
+            }
+            const t = document.createElement('div'); t.className = 'message-time'; t.textContent = getTimeString(); div.appendChild(t);
+            chatBox.appendChild(div); chatBox.scrollTop = chatBox.scrollHeight;
+        }
+        function showLoading() {
+            const d = document.createElement('div'); d.className = 'loading'; d.id = 'loadingIndicator'; d.textContent = '思考中...';
+            chatBox.appendChild(d); chatBox.scrollTop = chatBox.scrollHeight;
+            let n = 0; d._t = setInterval(() => { n = (n+1)%4; d.textContent = '思考中' + '.'.repeat(n||1); }, 400);
+        }
+        function hideLoading() {
+            const l = document.getElementById('loadingIndicator');
+            if (l) { if (l._t) clearInterval(l._t); l.remove(); }
+        }
+        function setSending(v) { isLoading = v; sendBtn.disabled = v; sendBtn.textContent = v ? '处理中...' : '发送'; }
+
+        async function sendMessage() {
+            if (isLoading) return;
+            const text = msgInput.value.trim(); if (!text) return;
+            msgInput.value = ''; msgInput.style.height = 'auto';
+            appendMessage(text, 'user');
+
+            // 统一走 /chat 端点（AI 自动判断意图：闲聊/录入/查询/更新/删除）
+            showLoading(); setSending(true);
+            try {
+                const resp = await fetch('/chat', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text, context: lastAiMessage, pending_op_id: pendingOpId, user: getUserInfo()?.name || '', team_name: getUserInfo()?.team_name || '默认小组', visibility: currentVisibility, assigned_to: currentAssignedTo })
+                });
+                hideLoading(); setSending(false);
+                if (!resp.ok) { let em = `请求失败(${resp.status})`; try { const ed = await resp.json(); em = ed.error || em; } catch(e){} appendMessage('❌ '+em, 'ai'); return; }
+                const data = await resp.json();
+                const display = data.result || data.message || '处理完成。';
+                appendMessage(display, 'ai'); lastAiMessage = display;
+                if (data.pending_op_id) pendingOpId = data.pending_op_id;
+                if (data.confirmed || data.cancelled) pendingOpId = '';
+                if (data.overdue_count > 0) {
+                    const w = document.createElement('div'); w.className = 'message ai overdue-warning';
+                    w.textContent = `🔴 ${data.overdue_count} 个任务已超过截止时间，请尽快处理！`;
+                    chatBox.appendChild(w); chatBox.scrollTop = chatBox.scrollHeight;
+                }
+            } catch(e) { hideLoading(); setSending(false); appendMessage('❌ 网络连接失败，请检查网络。', 'ai'); }
+        }
+        function quickSend(text) { if (isLoading) return; msgInput.value = text; sendMessage(); }
+        sendBtn.addEventListener('click', sendMessage);
+        msgInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+        msgInput.addEventListener('input', function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
+        msgInput.focus();
+
+        // ========== 任务可见性 ==========
+        let currentVisibility = 'public';
+        let currentAssignedTo = [];
+
+        function setVisibility(vis) {
+            currentVisibility = vis;
+            document.querySelectorAll('.vis-option').forEach(el => el.classList.toggle('active', el.dataset.vis === vis));
+            document.getElementById('userPicker').classList.toggle('show', vis === 'private');
+            if (vis === 'private') loadUserPicker();
+        }
+
+        async function loadUserPicker() {
+            const info = getUserInfo();
+            if (!info) return;
+            const picker = document.getElementById('userPicker');
+            picker.innerHTML = '<span style="font-size:12px;color:#999;">加载人员列表...</span>';
+            try {
+                const resp = await fetch(`/api/users?current_user=${encodeURIComponent(info.name)}&team_name=${encodeURIComponent(info.team_name||'默认小组')}`);
+                if (!resp.ok) { picker.innerHTML = ''; return; }
+                const users = await resp.json();
+                // 默认选中当前用户
+                if (currentAssignedTo.length === 0) currentAssignedTo = [info.name];
+                picker.innerHTML = users.map(u => {
+                    const checked = currentAssignedTo.includes(u.name);
+                    return `<span class="user-chip ${checked ? 'checked' : ''}" data-name="${escHtml(u.name)}" onclick="toggleAssignedUser('${escHtml(u.name)}')">${checked ? '✓' : ''} ${escHtml(u.name)}</span>`;
+                }).join('');
+            } catch(e) { picker.innerHTML = ''; }
+        }
+
+        function toggleAssignedUser(name) {
+            const idx = currentAssignedTo.indexOf(name);
+            if (idx >= 0) currentAssignedTo.splice(idx, 1);
+            else currentAssignedTo.push(name);
+            // 刷新 chips
+            document.querySelectorAll('.user-chip').forEach(chip => {
+                const n = chip.dataset.name;
+                const checked = currentAssignedTo.includes(n);
+                chip.classList.toggle('checked', checked);
+                chip.textContent = `${checked ? '✓' : ''} ${n}`;
+            });
+        }
+
+        // ========== 用户登录与权限管理（全局） ==========
+        const USER_KEY = 'user_info';
+
+        function getUserInfo() {
+            try { return JSON.parse(localStorage.getItem(USER_KEY)); } catch(e) { return null; }
+        }
+        function setUserInfo(info) {
+            if (info) localStorage.setItem(USER_KEY, JSON.stringify(info));
+            else localStorage.removeItem(USER_KEY);
+            updateUserUI();
+        }
+
+        function updateUserUI() {
+            const info = getUserInfo();
+            const tag = document.getElementById('userTag');
+            const tagName = document.getElementById('userTagName');
+            const sendBtnEl = document.getElementById('sendBtn');
+            const msgInputEl = document.getElementById('msgInput');
+            const adminBtn = document.getElementById('adminUsersTopBtn');
+            if (info) {
+                tag.style.display = 'flex';
+                tagName.textContent = info.name;
+                // 管理员按钮
+                adminBtn.style.display = info.is_admin ? 'block' : 'none';
+                // 权限控制
+                if (!info.can_create) {
+                    sendBtnEl.disabled = true;
+                    sendBtnEl.textContent = '⛔ 无权限';
+                    sendBtnEl.style.background = '#ccc';
+                    msgInputEl.disabled = true;
+                    msgInputEl.placeholder = '⛔ 你暂无布置任务的权限';
+                } else {
+                    sendBtnEl.disabled = false;
+                    sendBtnEl.textContent = '发送';
+                    sendBtnEl.style.background = '#4a90d9';
+                    msgInputEl.disabled = false;
+                    msgInputEl.placeholder = '输入文字...';
+                }
+            } else {
+                tag.style.display = 'none';
+                adminBtn.style.display = 'none';
+            }
+            const label = document.getElementById('identityLabel');
+            if (label) label.textContent = info ? (info.is_admin ? '全部任务（管理员）' : `👤 ${info.name} 的任务`) : '未登录';
+        }
+
+        // 登录弹窗
+        const identityModal = document.getElementById('identityModal');
+        const identityModalInput = document.getElementById('identityModalInput');
+        const identityModalPassword = document.getElementById('identityModalPassword');
+        const identityModalError = document.getElementById('identityModalError');
+        const identityModalLogout = document.getElementById('identityModalLogout');
+
+        function showIdentityModal(isReSelect) {
+            identityModal.classList.add('active');
+            document.getElementById('loginStep1').style.display = 'block';
+            document.getElementById('loginStep2').style.display = 'none';
+            document.getElementById('teamNameInput').value = isReSelect ? (getUserInfo()?.team_name || '默认小组') : '';
+            identityModalInput.value = isReSelect ? (getUserInfo()?.name || '') : '';
+            identityModalPassword.value = '';
+            identityModalError.style.display = 'none';
+            document.getElementById('teamError').style.display = 'none';
+            identityModalLogout.style.display = isReSelect ? 'inline' : 'none';
+            setTimeout(() => document.getElementById('teamNameInput').focus(), 200);
+        }
+
+        function resetLoginSteps() {
+            document.getElementById('loginStep1').style.display = 'block';
+            document.getElementById('loginStep2').style.display = 'none';
+            document.getElementById('teamError').style.display = 'none';
+        }
+
+        // 步骤1: 查询小组
+        document.getElementById('teamCheckBtn').addEventListener('click', async () => {
+            const tn = document.getElementById('teamNameInput').value.trim();
+            if (!tn) { document.getElementById('teamError').textContent = '请输入小组名'; document.getElementById('teamError').style.display = 'block'; return; }
+            try {
+                const resp = await fetch(`/api/teams?team_name=${encodeURIComponent(tn)}`);
+                const d = await resp.json();
+                if (!d.exists) {
+                    // 小组不存在 → 询问创建
+                    if (confirm(`小组「${tn}」不存在，是否创建新小组？`)) {
+                        const adminName = prompt('请输入管理员姓名：', getUserInfo()?.name || '');
+                        if (!adminName) return;
+                        const adminPw = prompt('请设置管理员密码（至少4位）：', '123456');
+                        if (!adminPw || adminPw.length < 4) { alert('密码至少4位'); return; }
+                        try {
+                            const cr = await fetch('/api/teams/create', {
+                                method: 'POST', headers: {'Content-Type':'application/json'},
+                                body: JSON.stringify({team_name: tn, admin_name: adminName, password: adminPw})
+                            });
+                            const cd = await cr.json();
+                            if (cd.success) {
+                                showToast(cd.message, true);
+                                identityModalInput.value = adminName;
+                                document.getElementById('loginStep1').style.display = 'none';
+                                document.getElementById('loginStep2').style.display = 'block';
+                                setTimeout(() => identityModalPassword.focus(), 200);
+                            } else {
+                                document.getElementById('teamError').textContent = cd.error || '创建失败';
+                                document.getElementById('teamError').style.display = 'block';
+                            }
+                        } catch(e) { document.getElementById('teamError').textContent = '网络错误'; document.getElementById('teamError').style.display = 'block'; }
+                    }
+                    return;
+                }
+                // 显示成员列表
+                const ml = document.getElementById('memberList');
+                if (d.members.length > 0) {
+                    ml.innerHTML = '<div style="font-size:13px;color:#888;margin-bottom:4px;">小组成员（点击选择）：</div>' +
+                        d.members.map(m => `<span class="user-chip checked" data-name="${escHtml(m.name)}" onclick="selectMember('${escHtml(m.name)}')" style="display:inline-block;margin:2px;">${escHtml(m.name)}${m.is_admin?' 👑':''}</span>`).join('');
+                } else {
+                    ml.innerHTML = '<div style="font-size:13px;color:#888;">小组暂无成员，请输入姓名创建</div>';
+                }
+                document.getElementById('loginStep1').style.display = 'none';
+                document.getElementById('loginStep2').style.display = 'block';
+                setTimeout(() => identityModalInput.focus(), 200);
+            } catch(e) { document.getElementById('teamError').textContent = '网络错误'; document.getElementById('teamError').style.display = 'block'; }
+        });
+
+        function selectMember(name) {
+            identityModalInput.value = name;
+            identityModalPassword.focus();
+        }
+
+        async function doLogin() {
+            const name = identityModalInput.value.trim();
+            const password = identityModalPassword.value.trim();
+            const team_name = document.getElementById('teamNameInput').value.trim();
+            if (!name) {
+                identityModalError.textContent = '请输入姓名';
+                identityModalError.style.display = 'block'; return;
+            }
+            identityModalError.style.display = 'none';
+            try {
+                const resp = await fetch('/api/login', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, password, team_name })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    identityModalError.textContent = data.error || '登录失败';
+                    identityModalError.style.display = 'block'; return;
+                }
+                setUserInfo(data.user);
+                identityModal.classList.remove('active');
+                chatBox.innerHTML = '<div class="message ai">👋 你好 {0}！输入任务描述或查询问题，我会帮你处理。<div class="message-time">现在</div></div>'.replace('{0}', data.user.name); lastAiMessage = '';
+                if (data.message) showToast(data.message, true);
+                if (kanbanOverlay.classList.contains('active')) { loadKanban(); updateNotifications(); }
+                // 首次登录强制设置密保
+                if (!data.user.has_security) showSecurityModal();
+            } catch(e) {
+                identityModalError.textContent = '网络错误，请重试';
+                identityModalError.style.display = 'block';
+            }
+        }
+
+        document.getElementById('identityModalConfirm').addEventListener('click', doLogin);
+        identityModalInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') identityModalPassword.focus();
+        });
+        identityModalPassword.addEventListener('keydown', e => {
+            if (e.key === 'Enter') doLogin();
+        });
+
+        document.getElementById('identityModalLogout').addEventListener('click', () => {
+            setUserInfo(null); identityModal.classList.remove('active');
+            chatBox.innerHTML = '<div class="message ai">已退出，请重新登录。<div class="message-time">现在</div></div>'; lastAiMessage = '';
+            notifyBadge.classList.remove('show'); lastNotifyCount = 0; updateUserUI();
+            if (kanbanOverlay.classList.contains('active')) { stopNotifyPoll(); kanbanOverlay.classList.remove('active'); }
+            showIdentityModal(false);
+        });
+
+
+        // ========== 忘记密码 ==========
+        let forgotPwQuestion = '';
+        function showForgotPwModal() {
+            identityModal.classList.remove('active');
+            const modal = document.getElementById('forgotPwModal');
+            modal.classList.add('active');
+            document.getElementById('forgotPwError').style.display = 'none';
+            document.getElementById('forgotPwName').value = '';
+            document.getElementById('forgotPwAnswer').value = '';
+            forgotPwQuestion = '';
+            // 隐藏密保问题显示
+            document.getElementById('forgotPwQuestionDisplay').style.display = 'none';
+            setTimeout(() => document.getElementById('forgotPwName').focus(), 200);
+        }
+        // 输入姓名后自动查询密保问题
+        document.getElementById('forgotPwName').addEventListener('blur', async () => {
+            const name = document.getElementById('forgotPwName').value.trim();
+            if (!name) return;
+            try {
+                const resp = await fetch(`/api/security-question?name=${encodeURIComponent(name)}`);
+                const data = await resp.json();
+                const qDisplay = document.getElementById('forgotPwQuestionDisplay');
+                if (data.question) {
+                    forgotPwQuestion = data.question;
+                    qDisplay.textContent = '密保问题：' + data.question;
+                    qDisplay.style.display = 'block';
+                } else {
+                    forgotPwQuestion = '';
+                    qDisplay.textContent = data.error || '该用户未设置密保';
+                    qDisplay.style.display = 'block';
+                }
+            } catch(e) { console.error(e); }
+        });
+        document.getElementById('forgotPwConfirm').addEventListener('click', async () => {
+            const name = document.getElementById('forgotPwName').value.trim();
+            const answer = document.getElementById('forgotPwAnswer').value.trim();
+            if (!name || !answer) {
+                document.getElementById('forgotPwError').textContent = '请填写姓名和密保答案';
+                document.getElementById('forgotPwError').style.display = 'block'; return;
+            }
+            if (!forgotPwQuestion) {
+                document.getElementById('forgotPwError').textContent = '该用户未设置密保，请先查询或联系管理员';
+                document.getElementById('forgotPwError').style.display = 'block'; return;
+            }
+            try {
+                const resp = await fetch('/api/reset-password', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, answer })
+                });
+                const data = await resp.json();
+                if (!data.success) {
+                    document.getElementById('forgotPwError').textContent = data.error;
+                    document.getElementById('forgotPwError').style.display = 'block'; return;
+                }
+                showToast('✅ ' + data.message, true);
+                document.getElementById('forgotPwModal').classList.remove('active');
+                showIdentityModal(false);
+            } catch(e) { showToast('❌ 网络错误'); }
+        });
+
+        // ========== 密保设置（首次登录强制） ==========
+        function showSecurityModal() {
+            document.getElementById('securityModal').classList.add('active');
+            document.getElementById('securityQuestion').value = '';
+            document.getElementById('securityAnswer').value = '';
+            document.getElementById('securityError').style.display = 'none';
+            setTimeout(() => document.getElementById('securityQuestion').focus(), 200);
+        }
+        document.getElementById('securityConfirm').addEventListener('click', async () => {
+            const info = getUserInfo();
+            const q = document.getElementById('securityQuestion').value.trim();
+            const a = document.getElementById('securityAnswer').value.trim();
+            if (!q || !a) {
+                document.getElementById('securityError').textContent = '问题和答案不能为空';
+                document.getElementById('securityError').style.display = 'block'; return;
+            }
+            try {
+                const resp = await fetch('/api/set-security', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: info.name, question: q, answer: a })
+                });
+                const data = await resp.json();
+                if (!data.success) { showToast('❌ 保存失败'); return; }
+                document.getElementById('securityModal').classList.remove('active');
+                // 更新本地 userInfo 的 has_security
+                info.has_security = true; setUserInfo(info);
+                showToast('✅ 密保已设置', true);
+            } catch(e) { showToast('❌ 网络错误'); }
+        });
+        document.getElementById('securityAnswer').addEventListener('keydown', e => {
+            if (e.key === 'Enter') document.getElementById('securityConfirm').click();
+        });
+
+        // ========== 修改密码 ==========
+        document.getElementById('changePwConfirmBtn').addEventListener('click', async () => {
+            const info = getUserInfo();
+            const oldPw = document.getElementById('changePwOld').value;
+            const newPw = document.getElementById('changePwNew').value;
+            const confirmPw = document.getElementById('changePwConfirm').value;
+            const errEl = document.getElementById('changePwError');
+            if (!oldPw || !newPw || !confirmPw) { errEl.textContent = '请填写所有字段'; errEl.style.display = 'block'; return; }
+            if (newPw !== confirmPw) { errEl.textContent = '两次新密码不一致'; errEl.style.display = 'block'; return; }
+            try {
+                const resp = await fetch('/api/change-password', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: info.name, old_password: oldPw, new_password: newPw })
+                });
+                const data = await resp.json();
+                if (!data.success) { errEl.textContent = data.error; errEl.style.display = 'block'; return; }
+                document.getElementById('changePwModal').classList.remove('active');
+                showToast('✅ 密码已修改', true);
+            } catch(e) { showToast('❌ 网络错误'); }
+        });
+
+        // 顶部管理员按钮 → 打开用户管理面板（独立视图）
+        document.getElementById('adminUsersTopBtn').addEventListener('click', () => {
+            if (!getUserInfo()?.is_admin) return;
+            kanbanOverlay.classList.add('active');
+            updateUserUI();
+            switchView('admin');
+            startNotifyPoll();
+        });
+
+        // 点击用户标签 → 弹出菜单（含修改密码、修改密保、退出、关闭）
+        document.getElementById('userTag').addEventListener('click', function(e) {
+            const info = getUserInfo();
+            if (!info) { showIdentityModal(false); return; }
+            // 关闭已有菜单
+            document.querySelectorAll('.user-drop-menu').forEach(m => m.remove());
+            const menu = document.createElement('div');
+            menu.className = 'user-drop-menu';
+            const tagRect = document.getElementById('userTag').getBoundingClientRect();
+            menu.style.cssText = `position:fixed;top:${tagRect.bottom + 4}px;left:${tagRect.left}px;background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.15);z-index:500;padding:8px 0;min-width:150px;`;
+            menu.innerHTML = `
+                <div style="padding:10px 16px;font-size:14px;color:#333;border-bottom:1px solid #f0f0f0;">👤 ${escHtml(info.name)}${info.is_admin?' 👑':''}</div>
+                ${info.is_admin ? `<button class="menu-item" data-action="changeName" style="display:block;width:100%;padding:10px 16px;background:none;border:none;font-size:14px;text-align:left;cursor:pointer;min-height:44px;">✏️ 修改名称</button>` : ''}
+                <button class="menu-item" data-action="changePw" style="display:block;width:100%;padding:10px 16px;background:none;border:none;font-size:14px;text-align:left;cursor:pointer;min-height:44px;">🔐 修改密码</button>
+                <button class="menu-item" data-action="changeSec" style="display:block;width:100%;padding:10px 16px;background:none;border:none;font-size:14px;text-align:left;cursor:pointer;min-height:44px;">🔒 修改密保</button>
+                ${info.is_admin ? `<button class="menu-item" data-action="disband" style="display:block;width:100%;padding:10px 16px;background:none;border:none;font-size:14px;text-align:left;cursor:pointer;color:#e74c3c;min-height:44px;">💀 注销小组</button>` : ''}
+                <button class="menu-item" data-action="logout" style="display:block;width:100%;padding:10px 16px;background:none;border:none;font-size:14px;text-align:left;cursor:pointer;color:#e74c3c;min-height:44px;">🚪 退出登录</button>
+                <div style="border-top:1px solid #f0f0f0;margin-top:4px;"></div>
+                <button class="menu-item" data-action="close" style="display:block;width:100%;padding:10px 16px;background:none;border:none;font-size:14px;text-align:left;cursor:pointer;color:#999;min-height:44px;">❌ 关闭菜单</button>
+            `;
+            document.body.appendChild(menu);
+            menu.querySelectorAll('.menu-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const action = item.dataset.action;
+                    menu.remove();
+                    if (action === 'changeName') changeUserName();
+                    else if (action === 'changePw') document.getElementById('changePwModal').classList.add('active');
+                    else if (action === 'changeSec') showSecurityModal();
+                    else if (action === 'disband') disbandTeam();
+                    else if (action === 'logout') {
+                        setUserInfo(null); notifyBadge.classList.remove('show'); lastNotifyCount = 0; updateUserUI();
+                        chatBox.innerHTML = '<div class="message ai">已退出，请重新登录。<div class="message-time">现在</div></div>'; lastAiMessage = '';
+                        if (kanbanOverlay.classList.contains('active')) { stopNotifyPoll(); kanbanOverlay.classList.remove('active'); }
+                        showIdentityModal(false);
+                    }
+                });
+            });
+            // 点击外部关闭
+            setTimeout(() => document.addEventListener('click', function rm(ev) {
+                if (!menu.contains(ev.target) && ev.target !== document.getElementById('userTag')) { menu.remove(); document.removeEventListener('click', rm); }
+            }), 10);
+        });
+
+        // 页面加载
+        if (!getUserInfo()) {
+            showIdentityModal(false);
+        } else {
+            updateUserUI();
+        }
+
+        // ========== 看板功能 ==========
+        const kanbanOverlay = document.getElementById('kanbanOverlay');
+        const kanbanBody = document.getElementById('kanbanBody');
+        const identityLabel = document.getElementById('identityLabel');
+        const notifyBell = document.getElementById('notifyBell');
+        const notifyBadge = document.getElementById('notifyBadge');
+        const notifyDropdown = document.getElementById('notifyDropdown');
+        const toast = document.getElementById('toast');
+
+        let notifyPollTimer = null, lastNotifyCount = 0, remindCooldown = {};
+
+        // ========== 看板打开/关闭 ==========
+        // ========== 快速布置任务 ==========
+        document.getElementById('quickTaskBtn').addEventListener('click', () => {
+            const info = getUserInfo(); if (!info) return;
+            document.getElementById('qtName').value = info.name;
+            document.getElementById('qtDeadline').value = '';
+            document.getElementById('qtContent').value = '';
+            document.getElementById('qtError').style.display = 'none';
+            document.getElementById('quickTaskModal').classList.add('active');
+            setTimeout(() => document.getElementById('qtContent').focus(), 200);
+        });
+        document.getElementById('qtConfirm').addEventListener('click', async () => {
+            const info = getUserInfo();
+            const content = document.getElementById('qtContent').value.trim();
+            const name = document.getElementById('qtName').value.trim();
+            let deadline = document.getElementById('qtDeadline').value;
+            if (deadline) deadline = deadline.replace('T', ' ') + ':00';  // datetime-local → YYYY-MM-DD HH:MM:SS
+            const visibility = document.getElementById('qtVisibility').value;
+            const errEl = document.getElementById('qtError');
+            if (!content) { errEl.textContent = '请输入任务内容'; errEl.style.display = 'block'; return; }
+            // 公共任务可以不填负责人（表示全体）
+            if (!name && visibility === 'private') { errEl.textContent = '指定任务必须填写负责人'; errEl.style.display = 'block'; return; }
+            try {
+                const resp = await fetch('/add', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: content,
+                        user: info.name,
+                        visibility: visibility,
+                        assigned_to: visibility === 'private' ? [name] : [],
+                        deadline: deadline,
+                        task_name: name,
+                        team_name: info.team_name || '默认小组'
+                    })
+                });
+                const d = await resp.json();
+                if (!resp.ok || d.error) { errEl.textContent = d.error || '创建失败'; errEl.style.display = 'block'; return; }
+                document.getElementById('quickTaskModal').classList.remove('active');
+                showToast(d.message || d.result || '✅ 任务已布置', true);
+                loadKanban();
+            } catch(e) { errEl.textContent = '网络错误'; errEl.style.display = 'block'; }
+        });
+
+        document.getElementById('kanbanBtn').addEventListener('click', () => {
+            if (!getUserInfo()) { showIdentityModal(false); return; }
+            document.getElementById('kanbanOverlay').classList.add('active');
+            document.getElementById('adminOverlay').classList.remove('active');
+            updateUserUI();
+            loadKanban();
+            updateNotifications();
+            startNotifyPoll();
+        });
+        document.getElementById('kanbanClose').addEventListener('click', () => {
+            document.getElementById('kanbanOverlay').classList.remove('active');
+            stopNotifyPoll();
+            notifyDropdown.classList.remove('open');
+        });
+
+        // ========== 管理员按钮 → 打开用户管理（独立容器） ==========
+        document.getElementById('adminUsersTopBtn').addEventListener('click', () => {
+            const info = getUserInfo();
+            if (!info || !info.is_admin) { showToast('❌ 无权访问，仅管理员可用'); return; }
+            // 隐藏看板，显示管理面板
+            document.getElementById('kanbanOverlay').classList.remove('active');
+            document.getElementById('adminOverlay').classList.add('active');
+            openUserManagement();
+            startNotifyPoll();
+        });
+        document.getElementById('adminClose').addEventListener('click', () => {
+            document.getElementById('adminOverlay').classList.remove('active');
+            stopNotifyPoll();
+        });
+        function closeAdminPanel() {
+            document.getElementById('adminOverlay').classList.remove('active');
+            document.getElementById('kanbanOverlay').classList.add('active');
+            loadKanban();
+        }
+
+        // ========== 用户管理面板（暴力硬编码渲染） ==========
+        async function openUserManagement() {
+            const adminBody = document.getElementById('adminBody');
+            const info = getUserInfo();
+            adminBody.innerHTML = '<div class="kanban-empty">加载用户列表...</div>';
+
+            if (!info || !info.is_admin) {
+                adminBody.innerHTML = '<div class="kanban-empty">❌ 无权访问：你不是管理员</div>';
+                return;
+            }
+
+            // 请求用户列表
+            let users = [];
+            try {
+                const resp = await fetch(`/api/users?current_user=${encodeURIComponent(info.name)}&team_name=${encodeURIComponent(info.team_name||'默认小组')}`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                users = await resp.json();
+            } catch(e) {
+                adminBody.innerHTML = `<div class="kanban-empty">❌ 加载失败: ${e.message}</div>`;
+                return;
+            }
+
+            // 硬编码渲染
+            let html = '';
+
+            // -- 添加成员区 --
+            html += `
+            <div style="width:100%;background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,0.08);margin-bottom:12px;">
+                <h3 style="margin-bottom:10px;font-size:16px;">➕ 添加成员</h3>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                    <input id="newMemberName" placeholder="输入新成员姓名" autocomplete="off" style="flex:1;min-width:100px;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:15px;outline:none;">
+                    <label style="font-size:14px;display:flex;align-items:center;gap:4px;min-height:44px;cursor:pointer;"><input type="checkbox" id="newMemberCreate" checked> 布置任务</label>
+                    <label style="font-size:14px;display:flex;align-items:center;gap:4px;min-height:44px;cursor:pointer;"><input type="checkbox" id="newMemberRemind"> 催促</label>
+                    <button id="btnAddMember" style="padding:10px 20px;background:#27ae60;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;min-height:44px;">添加</button>
+                </div>
+            </div>`;
+
+            // -- 用户列表 --
+            html += `
+            <div style="width:100%;background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+                <h3 style="margin-bottom:12px;font-size:16px;">👥 成员列表 (${users.length}人)</h3>`;
+
+            users.forEach(u => {
+                const isSelf = u.is_admin;
+                html += `
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f0f0f0;flex-wrap:wrap;" data-user="${escHtml(u.name)}">
+                    <span style="min-width:60px;font-weight:600;">${escHtml(u.name)}${u.is_admin?' 👑':''}</span>
+                    <label style="font-size:13px;display:flex;align-items:center;gap:3px;min-height:44px;cursor:${isSelf?'not-allowed':'pointer'};">
+                        <input type="checkbox" class="perm-create" ${u.can_create?'checked':''} ${isSelf?'disabled':''}> 布置任务
+                    </label>
+                    <label style="font-size:13px;display:flex;align-items:center;gap:3px;min-height:44px;cursor:${isSelf?'not-allowed':'pointer'};">
+                        <input type="checkbox" class="perm-remind" ${u.can_remind?'checked':''} ${isSelf?'disabled':''}> 催促
+                    </label>
+                    <button class="btn-reset-pw" data-user="${escHtml(u.name)}" style="padding:6px 12px;font-size:12px;background:#fff3e0;color:#e65100;border:1px solid #ffcc80;border-radius:6px;cursor:pointer;min-height:36px;">重置密码</button>
+                    <button class="btn-delete-user" data-user="${escHtml(u.name)}" ${isSelf?'disabled':''} style="padding:6px 12px;font-size:12px;background:${isSelf?'#eee':'#ffebee'};color:${isSelf?'#ccc':'#c62828'};border:1px solid ${isSelf?'#ddd':'#ffcdd2'};border-radius:6px;cursor:${isSelf?'not-allowed':'pointer'};min-height:36px;">${isSelf?'管理员':'删除'}</button>
+                </div>`;
+            });
+
+            html += `
+                <div style="margin-top:14px;display:flex;gap:10px;">
+                    <button id="btnSavePerms" style="padding:10px 24px;background:#4a90d9;color:#fff;border:none;border-radius:8px;font-size:15px;cursor:pointer;min-height:44px;">保存修改</button>
+                    <button onclick="closeAdminPanel()" style="padding:10px 24px;background:#eee;color:#666;border:none;border-radius:8px;font-size:15px;cursor:pointer;min-height:44px;">返回看板</button>
+                </div>
+            </div>`;
+
+            adminBody.innerHTML = html;
+
+            // ====== 绑定事件（直接DOM操作，不依赖HTML onclick） ======
+            document.getElementById('btnAddMember').addEventListener('click', async () => {
+                const name = document.getElementById('newMemberName').value.trim();
+                if (!name) { showToast('请输入成员姓名'); return; }
+                const cc = document.getElementById('newMemberCreate').checked;
+                const cr = document.getElementById('newMemberRemind').checked;
+                const resp = await fetch('/api/users/add', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({current_user:info.name, name, can_create:cc, can_remind:cr, team_name:info.team_name||'默认小组'})
+                });
+                const d = await resp.json();
+                showToast(d.success ? `✅ ${d.message}` : `❌ ${d.error||'失败'}`, d.success);
+                if (d.success) { document.getElementById('newMemberName').value = ''; openUserManagement(); }
+            });
+
+            document.getElementById('btnSavePerms').addEventListener('click', async () => {
+                let count = 0;
+                const rows = adminBody.querySelectorAll('[data-user]');
+                for (const row of rows) {
+                    const name = row.getAttribute('data-user');
+                    const cc = row.querySelector('.perm-create')?.checked ?? true;
+                    const cr = row.querySelector('.perm-remind')?.checked ?? false;
+                    const resp = await fetch('/api/users/update', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({current_user:info.name, target_user:name, can_create:cc, can_remind:cr})
+                    });
+                    if (resp.ok) count++;
+                }
+                console.log(`保存权限: ${count} 个用户已更新`);
+                showToast(`✅ 已更新 ${count} 个用户的权限`, true);
+                openUserManagement();
+            });
+
+            // 重置密码按钮
+            adminBody.querySelectorAll('.btn-reset-pw').forEach(btn => {
+                btn.addEventListener('click', async function() {
+                    const target = this.getAttribute('data-user');
+                    if (!confirm(`确定将「${target}」的密码重置为 123456 吗？`)) return;
+                    console.log(`重置密码: ${target}`);
+                    const resp = await fetch('/api/admin/reset-user-password', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({current_user:info.name, target_user:target})
+                    });
+                    const d = await resp.json();
+                    showToast(d.success ? `✅ ${d.message}` : `❌ ${d.error}`, d.success);
+                });
+            });
+
+            // 删除用户按钮
+            adminBody.querySelectorAll('.btn-delete-user').forEach(btn => {
+                btn.addEventListener('click', async function() {
+                    const target = this.getAttribute('data-user');
+                    if (!confirm(`确定要删除用户「${target}」吗？此操作不可撤销！`)) return;
+                    console.log(`删除用户: ${target}`);
+                    const resp = await fetch('/api/users/delete', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({current_user:info.name, target_user:target})
+                    });
+                    const d = await resp.json();
+                    showToast(d.success ? `✅ ${d.message}` : `❌ ${d.error}`, d.success);
+                    if (d.success) openUserManagement();
+                });
+            });
+        }
+
+        notifyBell.addEventListener('click', (e) => {
+            e.stopPropagation();
+            notifyDropdown.classList.toggle('open');
+            if (notifyDropdown.classList.contains('open')) updateNotifications();
+        });
+        document.addEventListener('click', (e) => {
+            if (!notifyBell.contains(e.target) && !notifyDropdown.contains(e.target)) notifyDropdown.classList.remove('open');
+        });
+
+        function showToast(msg, isGreen) {
+            toast.textContent = msg; toast.className = 'toast' + (isGreen ? ' green' : '');
+            toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        function toggleKanbanView() {
+            loadKanban();
+        }
+
+        let searchTimer = null;
+        function debounceLoadKanban() { clearTimeout(searchTimer); searchTimer = setTimeout(loadKanban, 300); }
+
+        async function loadKanban() {
+            kanbanBody.innerHTML = '<div class="kanban-empty">加载中...</div>';
+            const info = getUserInfo();
+            try {
+                let url = '/api/tasks';
+                const viewMode = document.getElementById('kanbanViewToggle').value;
+                if (info && viewMode === 'mine') url += `?user=${encodeURIComponent(info.name)}`;
+                if (info) url += (url.includes('?') ? '&' : '?') + `viewer=${encodeURIComponent(info.name)}`;
+                url += `&team_name=${encodeURIComponent(info?.team_name||'默认小组')}`;
+                const sortMode = document.getElementById('sortSelect')?.value || 'default';
+                url += `&sort=${sortMode}`;
+                const searchKw = document.getElementById('kanbanSearch')?.value.trim() || '';
+                if (searchKw) url += `&search=${encodeURIComponent(searchKw)}`;
+                const resp = await fetch(url);
+                if (!resp.ok) throw new Error('请求失败');
+                const tasks = await resp.json();
+                if (tasks.length === 0) { kanbanBody.innerHTML = '<div class="kanban-empty">📭 暂无任务</div>'; return; }
+                kanbanBody.innerHTML = tasks.map(t => {
+                    const overdue = t.is_overdue, done = t.status === '已完成' || t.status === '完成';
+                    let sc = 'stat-todo'; if (done) sc = 'stat-done'; else if (t.status === '进行中') sc = 'stat-progress';
+                    const cc = []; if (overdue) cc.push('overdue'); if (done) cc.push('done');
+                    const oh = t.overdue_hours > 0 ? `已超时 ${t.overdue_hours} 小时` : '已超时';
+                    const showRemind = info && info.can_remind;
+                    const isPub = t.is_public !== false && t.is_public !== 0;  // 兼容 int/bool
+                    const visTag = isPub ? '<span class="vis-tag vis-public">🌐 公共</span>' : `<span class="vis-tag vis-private">👥 仅限: ${escHtml(t.assigned_to || '未指定')}</span>`;
+                    const canDelete = info && (info.is_admin || info.can_create);
+                    const delBtn = canDelete ? `<span onclick="deleteTaskCard(${t.id})" title="删除此任务" style="position:absolute;top:6px;right:6px;color:#e74c3c;font-size:18px;cursor:pointer;line-height:1;padding:4px;min-width:32px;min-height:32px;display:flex;align-items:center;justify-content:center;z-index:2;">✕</span>` : '';
+                    return `<div class="task-card ${cc.join(' ')}" id="card-${t.id}">
+                        <div class="card-overdue-tag">🚨 超时！</div>
+                        ${delBtn}
+                        <div class="card-name">👤 ${escHtml(t.name || '—')} ${visTag}</div>
+                        <div class="card-action">${escHtml(t.action || '—')}</div>
+                        <span class="card-status ${sc}">${escHtml(t.status || '未完成')}</span>
+                        <div class="card-deadline">📅 ${escHtml(t.deadline || '无截止时间')}</div>
+                        <div class="card-overdue-info">⏰ ${oh}</div>
+                        <div class="card-actions">
+                            <button class="card-btn btn-complete" onclick="completeTask(${t.id})" ${done ? 'disabled' : ''}>${done ? '✓ 已完成' : '✅ 完成'}</button>
+                            ${showRemind ? `<button class="card-btn btn-remind" onclick="remindTask(${t.id})" id="remind-${t.id}">📣 催促</button>` : ''}
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch(e) { kanbanBody.innerHTML = '<div class="kanban-empty">❌ 加载失败，请重试</div>'; console.error(e); }
+        }
+
+        async function deleteTaskCard(id) {
+            if (!confirm('确定删除此任务吗？此操作不可恢复。')) return;
+            try {
+                const info = getUserInfo();
+                // 直接通过 SQLite/Supabase 删除
+                const resp = await fetch('/api/tasks/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, user: info?.name || '' })
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || '删除失败');
+                showToast('✅ 已删除', true);
+                loadKanban();
+            } catch(e) { showToast(`❌ ${e.message}`); }
+        }
+
+        async function completeTask(id) {
+            try {
+                const resp = await fetch('/api/tasks/complete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id}) });
+                if (!resp.ok) throw new Error('操作失败');
+                showToast('✅ 任务已标记为已完成', true);
+                loadKanban();
+            } catch(e) { showToast('❌ 操作失败'); }
+        }
+
+        async function remindTask(id) {
+            const now = Date.now();
+            if (remindCooldown[id] && now - remindCooldown[id] < 5000) { showToast('⏳ 请稍等 5 秒'); return; }
+            remindCooldown[id] = now;
+            const info = getUserInfo();
+            const btn = document.getElementById(`remind-${id}`);
+            if (btn) { btn.disabled = true; btn.textContent = '发送中...'; }
+            try {
+                const resp = await fetch('/api/remind', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({task_id:id, current_user:info?.name||'系统'}) });
+                if (!resp.ok) { const ed = await resp.json(); showToast(`❌ ${ed.error||'催促失败'}`); throw new Error(ed.error); }
+                const data = await resp.json();
+                showToast(`📣 催促已发送给 ${data.target_user}`, true);
+                setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = '📣 催促'; } }, 5000);
+            } catch(e) {
+                if (btn) { btn.disabled = false; btn.textContent = '📣 催促'; }
+                remindCooldown[id] = 0;
+            }
+        }
+
+        async function updateNotifications() {
+            const info = getUserInfo();
+            if (!info) { notifyBadge.classList.remove('show'); return; }
+            try {
+                const resp = await fetch(`/api/notifications?user=${encodeURIComponent(info.name)}&team_name=${encodeURIComponent(info.team_name||'默认小组')}`);
+                if (!resp.ok) return;
+                const notifs = await resp.json();
+                const count = notifs.length;
+                if (count > 0) { notifyBadge.textContent = count; notifyBadge.classList.add('show'); } else notifyBadge.classList.remove('show');
+                if (count > lastNotifyCount && lastNotifyCount > 0) showToast(`🔔 你有新的催促：${(notifs[0]?.message||'').substring(0,40)}...`, true);
+                lastNotifyCount = count;
+                if (count === 0) { notifyDropdown.innerHTML = '<div class="notify-empty">暂无未读通知</div>'; } else {
+                    notifyDropdown.innerHTML = notifs.map(n => `<div class="notify-item"><span>📣 ${escHtml(n.message||'')}</span><button class="mark-read" onclick="markOneRead(${n.id})">已读</button></div>`).join('') + '<button class="read-all" onclick="markAllRead()">全部已读</button>';
+                }
+            } catch(e) { console.error('通知加载失败:', e); }
+        }
+
+        async function markOneRead(id) {
+            await fetch('/api/notifications/read', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:[id]}) });
+            updateNotifications();
+        }
+
+        async function markAllRead() {
+            const info = getUserInfo(); if (!info) return;
+            await fetch('/api/notifications/read', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({all:true, user:info.name}) });
+            updateNotifications();
+        }
+
+        function startNotifyPoll() { stopNotifyPoll(); if (getUserInfo()) updateNotifications(); notifyPollTimer = setInterval(() => { if (getUserInfo()) updateNotifications(); }, 20000); }
+        function stopNotifyPoll() { if (notifyPollTimer) { clearInterval(notifyPollTimer); notifyPollTimer = null; } }
+
+
+        async function changeUserName() {
+            const info = getUserInfo(); if (!info) return;
+            const newName = prompt('请输入新名称：', info.name);
+            if (!newName || newName === info.name) return;
+            try {
+                const resp = await fetch('/api/users/change-name', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({old_name:info.name, new_name:newName}) });
+                const d = await resp.json();
+                if (d.success) { info.name = newName; setUserInfo(info); updateUserUI(); showToast('✅ '+d.message, true); if (kanbanOverlay.classList.contains('active')) loadKanban(); }
+                else showToast('❌ '+(d.error||'失败'));
+            } catch(e) { showToast('❌ 网络错误'); }
+        }
+        async function disbandTeam() {
+            const info = getUserInfo(); if (!info||!info.is_admin) return;
+            const pw = prompt('注销小组将删除所有数据！请输入管理员密码确认：');
+            if (!pw) return;
+            if (!confirm('确定注销小组「'+(info.team_name||'默认小组')+'」吗？所有数据永久删除！')) return;
+            try {
+                const resp = await fetch('/api/teams/disband', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({team_name:info.team_name||'默认小组', admin_name:info.name, password:pw}) });
+                const d = await resp.json();
+                if (d.success) { showToast('✅ '+d.message, true); setUserInfo(null); updateUserUI(); chatBox.innerHTML = '<div class="message ai">小组已注销，请重新登录。<div class="message-time">现在</div></div>'; lastAiMessage = ''; if (kanbanOverlay.classList.contains('active')) { stopNotifyPoll(); kanbanOverlay.classList.remove('active'); } showIdentityModal(false); }
+                else showToast('❌ '+(d.error||'失败'));
+            } catch(e) { showToast('❌ 网络错误'); }
+        }
+        function escHtml(str) {
+            if (!str) return ''; const div = document.createElement('div'); div.textContent = String(str); return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

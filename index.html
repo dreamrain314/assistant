@@ -1,0 +1,167 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>智能助理</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, 'Helvetica Neue', sans-serif; }
+        body {
+            background: #ededed;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        /* 顶部标题 */
+        .header {
+            background: #4a90d9;
+            color: white;
+            padding: 15px 20px;
+            text-align: center;
+            font-size: 20px;
+            font-weight: 600;
+            flex-shrink: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        /* 聊天消息容器 */
+        .chat-box {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: #ededed;
+        }
+        /* 消息通用样式 */
+        .message {
+            max-width: 80%;
+            padding: 10px 14px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            line-height: 1.4;
+            font-size: 16px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            animation: fadeIn 0.2s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* 用户消息（右侧） */
+        .message.user {
+            align-self: flex-end;
+            background: #95ec69;
+            color: #000;
+            border-bottom-right-radius: 4px;
+        }
+        /* AI消息（左侧） */
+        .message.ai {
+            align-self: flex-start;
+            background: #ffffff;
+            color: #000;
+            border-bottom-left-radius: 4px;
+        }
+        /* 底部输入区 */
+        .input-area {
+            display: flex;
+            padding: 10px 12px;
+            background: #f7f7f7;
+            border-top: 1px solid #ddd;
+            flex-shrink: 0;
+            gap: 8px;
+        }
+        .input-area input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid #ccc;
+            border-radius: 25px;
+            font-size: 16px;
+            outline: none;
+            background: white;
+        }
+        .input-area input:focus {
+            border-color: #4a90d9;
+        }
+        .input-area button {
+            padding: 10px 20px;
+            background: #4a90d9;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+        .input-area button:active {
+            background: #3a7bc8;
+        }
+        /* 加载提示 */
+        .loading {
+            font-size: 14px;
+            color: #888;
+            text-align: center;
+            padding: 4px 0;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">🤖 智能助理</div>
+
+    <div class="chat-box" id="chatBox">
+        <!-- 欢迎消息 -->
+        <div class="message ai">👋 你好！输入任务描述（如“张三完成了大屏项目”）或查询问题（如“张三有几个未完成的任务”），我会帮你处理。</div>
+    </div>
+
+    <div class="input-area">
+        <input type="text" id="msgInput" placeholder="输入文字..." autocomplete="off">
+        <button id="sendBtn">发送</button>
+    </div>
+
+
+    <script>
+        const chatBox = document.getElementById('chatBox');
+        const msgInput = document.getElementById('msgInput');
+        const sendBtn = document.getElementById('sendBtn');
+
+        // 判断是否为查询类文本（简单关键词匹配）
+        function isQuery(text) {
+            const keywords = ['查询', '多少', '几个', '统计', '未完成', '已完成', '完成情况', '列表', '所有'];
+            return keywords.some(kw => text.includes(kw));
+        }
+
+        // 添加消息到聊天框
+        function appendMessage(text, type) {
+            const div = document.createElement('div');
+            div.className = `message ${type}`;
+            div.textContent = text;
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // 显示临时加载状态
+        function showLoading() {
+            const div = document.createElement('div');
+            div.className = 'loading';
+            div.id = 'loadingIndicator';
+            div.textContent = '⏳ 思考中...';
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        // 发送消息
+        async function sendMessage() {
+            const text = msgInput.value.trim();
+            if (!text) return;
+
+            // 清空输入框
+            msgInput.value = '';
+            // 显示用户消息
+            appendMessage(text, 'user');
+
+            // 判断调用哪个接口
+            const endpoint = isQue
