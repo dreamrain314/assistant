@@ -229,6 +229,225 @@ def _find_matching_task(user_name, action_keyword, team_name='默认小组'):
     return None, None
 
 
+def _detect_batch_complete(user_text, user_name, context, team_name='默认小组', pending_op_id=''):
+    """
+    批量完成检测。不用"都"做唯一判定——任何含多任务名+完成动词的输入都可能触发。
+
+    信号优先级：
+    1. A和B/A、B/A与B + 完成动词 → 切分关键词分别完成
+    2. 所有/全部/以上 + 完成动词 → 查全部未完成
+    3. 某人 + 的 + 都/全 + 完成 → 按人过滤
+    4. 某天/某周/某月 + 的 + 都/全 + 完成 → 按日期过滤
+    5. 上下文中有任务列表 + "这些"/"以上"/"全部" + 完成 → 上下文批量
+    """
+    ui = user_text.strip()
+
+    # ====== 信号0：确认/取消已有的批量操作（优先级最高，不看完成动词） ======
+    if pending_op_id and pending_op_id in pending_ops:
+        op = pending_ops[pending_op_id]
+        if op.get('type') == 'batch_complete':
+            if re.search(r'(确定|确认|是的|对|没错|可以|行|好的|嗯|是|好|1)', ui) and not re.search(r'(取消|算了|不用|不要|不|否)', ui):
+                task_ids = op.get('task_ids', [])
+                count = 0
+                for tid in task_ids:
+                    try:
+                        db.supabase.table('records').update({'status': '已完成'}).eq('id', int(tid)).execute()
+                        count += 1
+                    except Exception as e:
+                        print(f"[BATCH] 完成 task {tid} 失败: {e}")
+                pending_ops.pop(pending_op_id)
+                return {
+                    'intent': 'complete',
+                    'result': f'已批量标记 {count} 个任务为已完成！',
+                    'batch_completed': count, 'confirmed': True
+                }
+            elif re.search(r'(取消|算了|不用|不要|不|否|2)', ui):
+                pending_ops.pop(pending_op_id)
+                return {'intent': 'cancel', 'result': '好的，已取消批量操作。', 'cancelled': True}
+            # 没匹配到确定/取消 → 继续往下问
+
+    # ====== 通用信号检测 ======
+    has_completion = bool(re.search(r'(完成|做好|搞定|写完|做完|提交|结束|办完|弄完|干完|交完'
+                                    r'|处理掉|修好|完事|交上|清掉|搞完|好了|完了|交了)'
+                                    r'(了|掉|好|妥)?', ui))
+    if not has_completion:
+        return None  # 没有完成信号，不触发批量
+
+    has_all_signal = bool(re.search(r'(所有|全部|以上|这些|那些|都|全|统统)', ui))
+
+    # ====== 信号1: A和B/A、B + 完成动词 → 切分关键词 ======
+    connector_pattern = re.search(r'(\S+?)[和、,，与跟](\S+)', ui)
+    if connector_pattern:
+        # 检查连接符两边是否像任务名（3-10个字符，不含虚词）
+        left = connector_pattern.group(1).strip()
+        right = connector_pattern.group(2).strip()
+        # 清理掉完成动词后缀和量词/副词
+        for v in ['完成了', '做好了', '搞定了', '做完了', '写完了', '交了', '好了', '完了', '了', '都', '也', '全']:
+            right = right.replace(v, '')
+            left = left.replace(v, '')
+        left = left.strip()
+        right = right.strip()
+        if len(left) >= 2 and len(right) >= 2 and len(left) <= 12 and len(right) <= 12:
+            return _execute_batch_keywords([left, right], user_name, team_name)
+
+    # ====== 信号2: 所有/全部/以上 + 完成 → 查全部未完成 ======
+    if has_all_signal and not connector_pattern:
+        # "某人的任务都完成了" → 提取人名
+        person_match = re.search(r'(\S{1,4})的(?:任务|工作|活|事情)?', ui)
+        target_person = None
+        if person_match:
+            pname = person_match.group(1)
+            if pname in ('我', '自己'):
+                target_person = user_name
+            elif pname not in ('所有', '全部', '以上', '这些', '今天', '明天', '这周', '这个月'):
+                target_person = pname
+
+        # "某天/某周的任务都完成了" → 提取日期
+        date_match = re.search(r'(今天|明天|昨天|这周|本周|这个月|本月|上周|下周)', ui)
+        target_date = date_match.group(1) if date_match else None
+
+        # "以上任务" → 从上下文提取
+        is_from_context = bool(re.search(r'(以上|这些|那些|前面|刚才)', ui))
+
+        return _execute_batch_all(
+            user_name, team_name, context,
+            target_person=target_person,
+            target_date=target_date,
+            from_context=is_from_context
+        )
+
+    return None
+
+
+def _execute_batch_keywords(keywords, user_name, team_name):
+    """批量完成：分别用每个关键词搜索并列出匹配结果，让用户确认"""
+    team = db.get_team(team_name)
+    tid = team['id'] if team else None
+    all_matches = []
+    seen_ids = set()
+    for kw in keywords:
+        if len(kw) < 2: continue
+        try:
+            base = db.supabase.table('records').select('*').neq('status', '已完成')
+            if tid: base = base.eq('team_id', tid)
+            r = base.like('action', f'%{kw}%').order('created_at', desc=True).limit(5).execute()
+            for t in (r.data or []):
+                tid_val = t.get('id')
+                if tid_val not in seen_ids:
+                    seen_ids.add(tid_val)
+                    all_matches.append(t)
+        except Exception as e:
+            print(f"[BATCH] 搜索 '{kw}' 失败: {e}")
+
+    if not all_matches:
+        return {'intent': 'complete', 'result': f'没有找到与「{"、".join(keywords)}」相关的未完成任务。'}
+
+    if len(all_matches) == 1:
+        t = all_matches[0]
+        db.supabase.table('records').update({'status': '已完成'}).eq('id', t['id']).execute()
+        return {'intent': 'complete', 'result': f'已将「{t.get("action","")}」标记为完成！（另一个关键词未找到匹配任务）', 'confirmed': True}
+
+    # 多个匹配 → 列出并确认
+    lines = []
+    for i, t in enumerate(all_matches[:10], 1):
+        who = t.get('name', '?')
+        what = t.get('action', '?')
+        dl = t.get('deadline', '无')
+        lines.append(f"{i}. {who}：{what}（截止：{dl}）")
+    nl = chr(10)
+    op_id = str(uuid.uuid4())[:8]
+    pending_ops[op_id] = {
+        'type': 'batch_complete',
+        'task_ids': [t['id'] for t in all_matches[:10]],
+        'count': len(all_matches)
+    }
+    return {
+        'intent': 'complete',
+        'result': f'找到 {len(all_matches)} 个匹配任务，要全部标记为已完成吗？' + nl + nl.join(lines) + nl + '回复「确定」确认批量完成。',
+        'pending_op_id': op_id,
+        'needs_confirmation': True
+    }
+
+
+def _execute_batch_all(user_name, team_name, context, target_person=None, target_date=None, from_context=False):
+    """批量完成所有/某人的/某天的/上下文中的未完成任务"""
+    team = db.get_team(team_name)
+    tid = team['id'] if team else None
+    tasks = []
+
+    try:
+        base = db.supabase.table('records').select('*').neq('status', '已完成')
+        if tid: base = base.eq('team_id', tid)
+
+        if target_person:
+            base = base.eq('name', target_person)
+        if target_date:
+            today = datetime.now()
+            if target_date in ('今天', '今天'):
+                base = base.gte('deadline', today.strftime('%Y-%m-%d')).lt('deadline', (today + timedelta(days=1)).strftime('%Y-%m-%d'))
+            elif target_date == '明天':
+                base = base.gte('deadline', (today + timedelta(days=1)).strftime('%Y-%m-%d')).lt('deadline', (today + timedelta(days=2)).strftime('%Y-%m-%d'))
+            elif target_date == '昨天':
+                base = base.gte('deadline', (today - timedelta(days=1)).strftime('%Y-%m-%d')).lt('deadline', today.strftime('%Y-%m-%d'))
+
+        # from_context: 从上一轮 AI 回复中提取任务列表
+        if from_context and context:
+            # 从上下文提取任务名（匹配 "X. 负责人：任务名" 格式）
+            ctx_tasks = re.findall(r'\d+\.\s*(\S+)：(.+?)（', context)
+            if ctx_tasks:
+                # 用每个任务名搜索
+                seen = set()
+                for who, what in ctx_tasks[:10]:
+                    r = base.like('action', f'%{what[:10]}%').eq('name', who).limit(3).execute()
+                    for t in (r.data or []):
+                        if t['id'] not in seen:
+                            seen.add(t['id'])
+                            tasks.append(t)
+
+        if not tasks and not from_context:
+            # 没有上下文 → 直接查全部
+            r = base.order('created_at', desc=True).limit(20).execute()
+            tasks = r.data or []
+
+            # 非管理员只能批量自己的
+            user_is_admin = (db.get_user(user_name) or {}).get('is_admin', False)
+            if user_name and not user_is_admin:
+                tasks = [t for t in tasks if t.get('name') == user_name]
+
+    except Exception as e:
+        print(f"[BATCH] _execute_batch_all 失败: {e}")
+        return None
+
+    if not tasks:
+        scope = f'{target_person}的' if target_person else ('今天的' if target_date else '')
+        return {'intent': 'complete', 'result': f'没有找到{scope}未完成任务。'}
+
+    # 列出并确认
+    scope = ''
+    if target_person: scope = f'{target_person}的'
+    elif target_date: scope = f'{target_date}的'
+    elif from_context: scope = '以上'
+    lines = []
+    for i, t in enumerate(tasks[:15], 1):
+        who = t.get('name', '?')
+        what = t.get('action', '?')
+        dl = t.get('deadline', '无')
+        lines.append(f"{i}. {who}：{what}（截止：{dl}）")
+    nl = chr(10)
+    op_id = str(uuid.uuid4())[:8]
+    pending_ops[op_id] = {
+        'type': 'batch_complete',
+        'task_ids': [t['id'] for t in tasks[:15]],
+        'count': len(tasks)
+    }
+    return {
+        'intent': 'complete',
+        'result': f'找到{scope}共 {len(tasks)} 个未完成任务：' + nl + nl.join(lines) + nl + '回复「确定」确认全部标记为已完成。',
+        'pending_op_id': op_id,
+        'needs_confirmation': True
+    }
+
+
 def handle_complete(keyword, user_name, team_name='默认小组'):
     team = db.get_team(team_name)
     tid = team['id'] if team else None
@@ -1723,6 +1942,11 @@ def chat():
                         return jsonify({'intent': 'update', 'result': reply or f'已更新「{t.get("action","")}」: {changed}', 'confirmed': True})
             action_word = '删除' if op.get('type') == 'delete_select' else '更新'
             return jsonify({'result': f'请回复要{action_word}的任务序号（如"{action_word}2"）。'})
+
+    # ★ 批量完成检测：在 route_intent 之前拦截
+    batch_result = _detect_batch_complete(user_text, data.get('user', ''), context, data.get('team_name', '默认小组'), data.get('pending_op_id', ''))
+    if batch_result:
+        return jsonify(batch_result)
 
     # ★ 模糊输入检测：太短/太模糊时主动询问，不瞎猜
     def _is_ambiguous(ui, intent):
