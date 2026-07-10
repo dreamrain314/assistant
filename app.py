@@ -94,9 +94,14 @@ def route_intent(user_input, user_name):
         if is_complete:
             # 正则提取任务关键词（省去AI调用，快1-2秒）
             kw = ui
-            # 去掉完成相关的词和"我"、"的"等常见字
-            for remove in ['已经','了','完成','做好','搞定','写完','做完','提交','结束','办完','我','我的','这个','那个']:
+            # 去掉完成相关的词和所有格代词（"我的"必须在"我"之前，否则"我"先被删会导致"的"裸奔）
+            for remove in ['已经','了','完成','做好','搞定','写完','做完','提交','结束','办完','我的','你的','他的','她的','这个','那个','把']:
                 kw = kw.replace(remove, '')
+            # 替换独立"我"/"你"为当前用户名（不直接删除，保留任务归属信息）
+            kw = kw.replace('我', user_name)
+            kw = kw.replace('你', user_name)
+            # 去掉开头的虚词/助词（"的"/"了"/"吗"/"呢"等不能作为任务名的开头）
+            kw = re.sub(r'^[的了吗呢啊着过吧嗯哦哈呀]+', '', kw)
             kw = kw.strip()[:30]
             return 'complete', {'keyword': kw or ui[:30], 'user_name': user_name}
 
