@@ -112,7 +112,7 @@ def route_intent(user_input, user_name):
             '季报', '年报', '快报', '简报', '通报', '函', '请示',
         ]
         # ★ 疑问式排除："做完了没有"/"写完了吗" 等 → 直接返回 query
-        if _re.search(r'(?:完了|好了|定了|交了|掉了)\s*(?:没有|了吗|没呢|没啊|没|不)\s*$', ui):
+        if _re.search(r'(?:完了|好了|定了|交了|掉了|完成了)\s*(?:没有|了吗|吗|没呢|没啊|没|不)\s*$', ui):
             return 'query', {'question': ui}
         is_complete = any(_re.search(kw, ui) for kw in complete_keywords) and (
             any(tw in ui for tw in task_words)
@@ -235,6 +235,15 @@ def handle_complete(keyword, user_name, team_name='默认小组'):
                 r = base.like('action', f'%{st}%').order('created_at', desc=True).limit(5).execute()
                 matches = r.data or []
                 if matches: break
+        # ★ 跨用户搜索：自己名下找不到 → 扩展到全组成员（不过滤状态）
+        if not matches:
+            base_all = db.supabase.table('records').select('*')
+            if tid: base_all = base_all.eq('team_id', tid)
+            for st in [keyword, keyword[:4], keyword[:3], keyword[:2]]:
+                if len(st) >= 2:
+                    r = base_all.like('action', f'%{st}%').order('created_at', desc=True).limit(5).execute()
+                    matches = r.data or []
+                    if matches: break
     except Exception as e:
         print(f"[DB] handle_complete failed: {e}")
     if not matches:
@@ -246,11 +255,15 @@ def handle_complete(keyword, user_name, team_name='默认小组'):
         reply = ai_reply("你是友好的任务助理。用纯文本。",
             f"已将「{act}」标记为已完成。一句话确认。{OUTPUT_FORMAT_RULE}")
         return {'intent': 'complete', 'result': reply or f'已将「{act}」标记为完成！'}, True
+    # ★ 多匹配时显示负责人+任务名，防止同名任务分不清
     lines = []
     for i, t in enumerate(matches[:5], 1):
-        lines.append(str(i) + '. ' + str(t.get('action','?')) + '（' + str(t.get('deadline','无')) + '）')
+        who = str(t.get('name', '?'))
+        what = str(t.get('action', '?'))
+        dl = str(t.get('deadline', '无'))
+        lines.append(f"{i}. {who}：{what}（截止：{dl}）")
     nl = chr(10)
-    msg = '找到 ' + str(len(matches)) + ' 个匹配任务，回复序号选择：' + nl + nl.join(lines)
+    msg = f"找到 {len(matches)} 个匹配任务，回复序号选择要完成哪一个：" + nl + nl.join(lines)
     return {'intent': 'complete', 'result': msg}, True
 
 def _find_similar_task(user_name, action_keyword, team_name='默认小组'):
@@ -1157,7 +1170,7 @@ def do_delete(delete_condition, team_name='默认小组'):
 
 
 def do_update(search_condition, new_status, new_deadline=''):
-    """更新任务状态/截止时间。"""
+    """更新任务状态/截止时间。多匹配时列出选项让用户选择。"""
     if not new_status and not new_deadline:
         return {'error': '没有提供需要更新的字段'}, 400
     updates = {}
@@ -1165,13 +1178,28 @@ def do_update(search_condition, new_status, new_deadline=''):
     if new_deadline and new_deadline.strip(): updates['deadline'] = new_deadline.strip()
     if not updates:
         return {'error': '没有提供需要更新的字段'}, 400
-    r = db.supabase.table('records').select('*').like('action', f'%{search_condition[:20]}%').order('created_at', desc=True).limit(1).execute()
+    r = db.supabase.table('records').select('*').like('action', f'%{search_condition[:20]}%').order('created_at', desc=True).limit(10).execute()
     if not r.data:
         return {'intent': 'update', 'result': '没有找到匹配的任务。'}
-    t = r.data[0]
-    db.supabase.table('records').update(updates).eq('id', t['id']).execute()
-    changed = ', '.join(f'{k}={v}' for k, v in updates.items())
-    return {'intent': 'update', 'result': '已更新「' + str(t.get('action','')) + '」: ' + changed, 'new_status': new_status, 'new_deadline': new_deadline}
+    if len(r.data) == 1:
+        t = r.data[0]
+        db.supabase.table('records').update(updates).eq('id', t['id']).execute()
+        changed = ', '.join(f'{k}={v}' for k, v in updates.items())
+        return {'intent': 'update', 'result': '已更新「' + str(t.get('action','')) + '」: ' + changed, 'new_status': new_status, 'new_deadline': new_deadline}
+    # ★ 多个匹配 → 列出选项让用户选择（与 do_delete 一致）
+    lines = []
+    for i, t in enumerate(r.data[:10], 1):
+        who = str(t.get('name', '?'))
+        what = str(t.get('action', '?'))
+        st = str(t.get('status', '?'))
+        dl = str(t.get('deadline', '无'))
+        lines.append(f"{i}. {who}：{what}（{st}，截止：{dl}）")
+    nl = chr(10)
+    op_id = str(uuid.uuid4())[:8]
+    # 存入 pending_ops，等用户选序号
+    pending_ops[op_id] = {'type': 'update_select', 'tasks': r.data[:10], 'updates': updates}
+    msg = f"找到 {len(r.data)} 个匹配任务，回复序号选择要更新哪一个：" + nl + nl.join(lines)
+    return {'intent': 'update', 'result': msg, 'pending_op_id': op_id, 'needs_confirmation': True}
 
 
 @app.route('/voice', methods=['POST'])
@@ -1632,15 +1660,13 @@ def chat():
                 # 无法识别 → 提示用户
                 return jsonify({'result': '我没太明白，这个是同一个任务吗？是就回复「是」，不是就回复「新建」。'})
 
-    # ---- 处理 delete_select 序号选择 ----
+    # ---- 处理 delete_select / update_select 序号选择 ----
     if dedup_op_id and dedup_op_id in pending_ops:
         op = pending_ops[dedup_op_id]
-        if op.get('type') == 'delete_select':
+        if op.get('type') in ('delete_select', 'update_select'):
             user_choice = user_text.strip()
-            # 提取序号（支持"删除2"、"第2个"、"第二个"、"2号"等）
-            import re as _re2
             idx = None
-            m = _re2.search(r'(\d+)', user_choice)
+            m = re.search(r'(\d+)', user_choice)
             if m:
                 idx = int(m.group(1)) - 1
             else:
@@ -1653,12 +1679,21 @@ def chat():
                 if 0 <= idx < len(tasks):
                     t = tasks[idx]
                     tid_val = t.get('id')
-                    db.supabase.table('records').delete().eq('id', int(tid_val)).execute()
-                    pending_ops.pop(dedup_op_id)
-                    reply = ai_reply('你是友好的任务助理。用纯文本。',
-                        '已删除：' + str(t.get('action','')) + '。一句话确认。' + OUTPUT_FORMAT_RULE)
-                    return jsonify({'intent': 'delete', 'result': reply or '已删除「' + str(t.get('action','')) + '」', 'confirmed': True})
-            return jsonify({'result': '请回复要删除的任务序号（如"删除2"）。'})
+                    if op.get('type') == 'delete_select':
+                        db.supabase.table('records').delete().eq('id', int(tid_val)).execute()
+                        pending_ops.pop(dedup_op_id)
+                        reply = ai_reply('你是友好的任务助理。用纯文本。',
+                            '已删除：' + str(t.get('action','')) + '。一句话确认。' + OUTPUT_FORMAT_RULE)
+                        return jsonify({'intent': 'delete', 'result': reply or '已删除「' + str(t.get('action','')) + '」', 'confirmed': True})
+                    else:  # update_select
+                        db.supabase.table('records').update(op.get('updates', {})).eq('id', int(tid_val)).execute()
+                        pending_ops.pop(dedup_op_id)
+                        changed = ', '.join(f'{k}={v}' for k, v in op.get('updates', {}).items())
+                        reply = ai_reply('你是友好的任务助理。用纯文本。',
+                            f'已更新「{t.get("action","")}」: {changed}。一句话确认。' + OUTPUT_FORMAT_RULE)
+                        return jsonify({'intent': 'update', 'result': reply or f'已更新「{t.get("action","")}」: {changed}', 'confirmed': True})
+            action_word = '删除' if op.get('type') == 'delete_select' else '更新'
+            return jsonify({'result': f'请回复要{action_word}的任务序号（如"{action_word}2"）。'})
 
     # 统一意图路由
     intent, intent_data = route_intent(user_text, data.get('user', ''))
