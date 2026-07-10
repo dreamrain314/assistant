@@ -87,6 +87,7 @@ def route_intent(user_input, user_name):
             '处理掉了', '处理完了', '修好了', '修完了',
             '完事了', '完事儿', '交上去了', '交上了', '交掉了',
             '做掉了', '弄好了', '清掉了', '搞完了', '搞掉了',
+            '改好了', '改完了', '帮.*交了', '替.*完了', '帮.*完了',
         ]
         task_words = [
             # 通用任务词
@@ -153,7 +154,18 @@ def route_intent(user_input, user_name):
         if p in ui:
             return 'chat', {}
 
-    # ====== 第三优先级：AI 精细分类 ======
+    # ====== 第三优先级：正则快速预判（省AI调用，更可靠） ======
+    # 更新检测
+    if _re.search(r'(改到|推迟|提前|延期|推到|推后|往后推|改成|标记为|改成.*完成)', ui):
+        return 'update', {'search_condition': ui, 'new_status': '', 'new_deadline': ''}
+    # 删除检测
+    if any(kw in ui for kw in ('删掉', '删除', '清空', '清除', '去掉', '移除', '取消')):
+        return 'delete', {'delete_condition': ui}
+    # 疑问检测
+    if any(kw in ui for kw in ('吗', '呢', '什么', '哪些', '怎么', '如何', '谁', '几个', '多少')):
+        return 'query', {'question': ui}
+
+    # ====== 第四优先级：AI 精细分类 ======
     result = classify_and_extract(ui)
     intent = result.get('intent', 'add')
 
