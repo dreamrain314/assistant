@@ -89,8 +89,17 @@ def route_intent(user_input, user_name):
             '任务', '试卷', '报告', '作业', '项目', '工作', '事情', '我的',
             '题目', '文档', '方案', '计划书', '报表', '总结', '汇报',
             '设计', '开发', '测试', '审查', '检查', '整理', '编写',
+            '日报', '周报', '月报', '论文', '代码', 'PPT', '演示', '合同',
+            '申请', '审批', '会议', '纪要', '邮件', '通知', '公告',
+            '翻译', '调研', '分析', '评估', '预算', '报销', '采购',
+            '培训', '考核', '绩效', '预案', '脚本', '画图', '海报',
+            '视频', '原型', '计划', '需求', '调研', '复盘', '总结',
         ]
-        is_complete = any(_re.search(kw, ui) for kw in complete_keywords) and any(tw in ui for tw in task_words)
+        is_complete = any(_re.search(kw, ui) for kw in complete_keywords) and (
+            any(tw in ui for tw in task_words)
+            # ★ 引号兜底：有引号 + 完成动词 → 一定是完成任务（即使关键词不在词表中）
+            or bool(_extract_quoted(ui))
+        )
         if is_complete:
             # ★ 提取完成人（引号前的人名或"我"→当前用户）
             completer = _extract_completer_name(ui, user_name)
