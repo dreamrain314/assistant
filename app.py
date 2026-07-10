@@ -92,6 +92,10 @@ def route_intent(user_input, user_name):
         ]
         is_complete = any(_re.search(kw, ui) for kw in complete_keywords) and any(tw in ui for tw in task_words)
         if is_complete:
+            # ★ 引号精确匹配：用户用 '任务名' 或 "任务名" 指定了确切任务
+            quoted = _extract_quoted(ui)
+            if quoted:
+                return 'complete', {'keyword': quoted, 'user_name': user_name}
             # 正则提取任务关键词（省去AI调用，快1-2秒）
             kw = ui
             # 去掉完成相关的词和所有格代词（"我的"必须在"我"之前，否则"我"先被删会导致"的"裸奔）
@@ -355,6 +359,19 @@ def _extract_multi_names(text, current_user=''):
             unique.append(n)
 
     return unique if len(unique) > 1 else None
+
+
+def _extract_quoted(text):
+    """
+    提取引号包裹的文本作为精确任务名。
+    支持: '单引号'  "双引号"  「中文引号」 『中文双引号』
+    返回第一个匹配的引号内容，无匹配返回 None。
+    """
+    for pat in [r'"([^"]+)"', r"'([^']+)'", r'「([^」]+)」', r'『([^』]+)』']:
+        m = re.search(pat, text)
+        if m:
+            return m.group(1).strip()
+    return None
 
 
 # ====================================================================
@@ -1655,6 +1672,12 @@ def chat():
         else:
             name = raw_name
         action = intent_data.get('action', user_text)
+
+        # ★ 引号精确匹配：用户用引号指定了确切任务名 → 直接用作 action
+        quoted_action = _extract_quoted(user_text)
+        if quoted_action:
+            action = quoted_action
+
         status = intent_data.get('status', '未完成')
         deadline = intent_data.get('deadline')
 
