@@ -1724,8 +1724,30 @@ def chat():
             action_word = '删除' if op.get('type') == 'delete_select' else '更新'
             return jsonify({'result': f'请回复要{action_word}的任务序号（如"{action_word}2"）。'})
 
+    # ★ 模糊输入检测：太短/太模糊时主动询问，不瞎猜
+    def _is_ambiguous(ui, intent):
+        # 极短输入 → 问清楚
+        if len(ui.strip()) < 5:
+            return True
+        # 含完成含义词但没有布置/计划/时间词 → 可能是完成、可能是闲聊
+        has_done = bool(re.search(r'(好了|完了|交了|已经|搞定|弄完|干了|完事|好了|摆平)', ui))
+        has_plan = bool(re.search(r'(要|需要|安排|布置|明天|后天|下周|截止|之前|必须)', ui))
+        if has_done and not has_plan and intent in ('add', 'query', 'update'):
+            return True
+        # 开头就是模糊词
+        if re.search(r'^(差不多|快点|还有|全都|刚好|马上|刚好)', ui) and intent in ('add', 'query'):
+            return True
+        return False
+
     # 统一意图路由
     intent, intent_data = route_intent(user_text, data.get('user', ''))
+
+    # ★ 模糊输入拦截：询问用户具体想做什么
+    if _is_ambiguous(user_text, intent) and intent in ('add', 'query', 'update') and '你要' not in user_text and '我想' not in user_text:
+        return jsonify({
+            'intent': 'ambiguous',
+            'result': '我没太明白你的意思～你是想：\n1. 录入一条新任务\n2. 标记某个任务已完成\n3. 查询任务\n\n能再说具体一点吗？比如"完成了XX报告"或"帮我安排XX任务"。'
+        })
 
     if intent == 'chat':
         reply = chat_directly(user_text, data.get('user', '未知用户'))
