@@ -785,19 +785,37 @@ def convert_to_natural_language(question, result_msg, row_count, overdue_count=0
 # 模糊匹配：查询无结果时尝试找相似任务
 # ====================================================================
 
-def fuzzy_match(question, team_name='默认小组'):
+def fuzzy_match(question, team_name='默认小组', current_user=''):
     """
     当精确查询无结果时，从本组数据库中拉取最近任务。
+    非管理员只能看到自己/公开/分配到的任务。
     """
     team = db.get_team(team_name)
     tid = team['id'] if team else None
+    user_is_admin = (db.get_user(current_user) or {}).get('is_admin', False) if current_user else False
     data = []
     if tid:
         try:
-            r = db.supabase.table('records').select('name,action,status,deadline') \
+            r = db.supabase.table('records').select('name,action,status,deadline,is_public,assigned_to') \
                 .eq('team_id', tid).order('created_at', desc=True).limit(30).execute()
             data = r.data or []
         except Exception: pass
+    if not data:
+        return None
+    # ★ 非管理员过滤：只显示自己的+公开的+分配到的+全体
+    if current_user and not user_is_admin:
+        filtered = []
+        for d in data:
+            owner = str(d.get('name', ''))
+            if owner == current_user or owner in ('', '全体', '所有人'):
+                filtered.append(d)
+            elif d.get('is_public'):
+                filtered.append(d)
+            else:
+                assigned = str(d.get('assigned_to', '') or '')
+                if assigned and current_user in [x.strip() for x in assigned.split(',')]:
+                    filtered.append(d)
+        data = filtered
     if not data:
         return None
     rows = [tuple(d.get(c,'') for c in ['name','action','status','deadline']) for d in data]
@@ -1028,7 +1046,7 @@ def do_query(question, current_user='', team_name='默认小组'):
 
     # 第三步：如果 0 结果 → 模糊匹配
     if not rows:
-        fuzzy_result = fuzzy_match(question, team_name)
+        fuzzy_result = fuzzy_match(question, team_name, current_user)
         if fuzzy_result:
             return {
                 "intent": "query",
@@ -1169,8 +1187,8 @@ def do_delete(delete_condition, team_name='默认小组'):
     return {'intent': 'delete', 'result': msg, 'deleted_count': 0, 'pending_op_id': op_id, 'needs_confirmation': True}
 
 
-def do_update(search_condition, new_status, new_deadline=''):
-    """更新任务状态/截止时间。多匹配时列出选项让用户选择。"""
+def do_update(search_condition, new_status, new_deadline='', current_user='', team_name='默认小组'):
+    """更新任务状态/截止时间。多匹配时列出选项让用户选择。非管理员只能更新自己的任务。"""
     if not new_status and not new_deadline:
         return {'error': '没有提供需要更新的字段'}, 400
     updates = {}
@@ -1178,7 +1196,12 @@ def do_update(search_condition, new_status, new_deadline=''):
     if new_deadline and new_deadline.strip(): updates['deadline'] = new_deadline.strip()
     if not updates:
         return {'error': '没有提供需要更新的字段'}, 400
-    r = db.supabase.table('records').select('*').like('action', f'%{search_condition[:20]}%').order('created_at', desc=True).limit(10).execute()
+    user_is_admin = (db.get_user(current_user) or {}).get('is_admin', False) if current_user else False
+    # ★ 非管理员只能搜自己的任务
+    base = db.supabase.table('records').select('*')
+    if current_user and not user_is_admin:
+        base = base.eq('name', current_user)
+    r = base.like('action', f'%{search_condition[:20]}%').order('created_at', desc=True).limit(10).execute()
     if not r.data:
         return {'intent': 'update', 'result': '没有找到匹配的任务。'}
     if len(r.data) == 1:
@@ -1819,7 +1842,7 @@ def chat():
         search_condition = intent_data.get('search_condition', user_text)
         new_status = intent_data.get('new_status', '')
         new_deadline = intent_data.get('new_deadline', '')
-        result = do_update(search_condition, new_status, new_deadline)
+        result = do_update(search_condition, new_status, new_deadline, data.get('user',''), data.get('team_name','默认小组'))
 
     else:  # add（含智能更新 + 去重确认）
         # name优先用AI提取的（如"张三有任务"→张三），但"我"/"自己"→登录用户
@@ -2151,18 +2174,24 @@ def api_tasks():
                 user_filter in [x.strip() for x in str(d.get('assigned_to','')).split(',') if x.strip()]
             )
 
-        # 可见性过滤
+        # 可见性过滤：非管理员只能看自己的+公开的+分配到的+全体
         if not viewer_is_admin and viewer:
-            is_public = d.get('is_public')
-            if isinstance(is_public, (int, float)):
-                is_public = bool(is_public)
-            if not is_public:
-                assigned = str(d.get('assigned_to', '') or '')
-                if not assigned:
-                    continue
-                names = [n.strip() for n in assigned.split(',') if n.strip()]
-                if viewer not in names:
-                    continue
+            task_owner = str(d.get('name', ''))
+            # 自己的任务 → 永远可见
+            if task_owner == viewer or task_owner in ('', '全体', '所有人'):
+                pass
+            else:
+                is_public = d.get('is_public')
+                if isinstance(is_public, (int, float)):
+                    is_public = bool(is_public)
+                if not is_public:
+                    assigned = str(d.get('assigned_to', '') or '')
+                    if assigned:
+                        names = [n.strip() for n in assigned.split(',') if n.strip()]
+                        if viewer not in names:
+                            continue
+                    else:
+                        continue
         # 超时检测
         d['is_overdue'] = False
         d['overdue_hours'] = 0
