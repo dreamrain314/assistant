@@ -92,22 +92,24 @@ def route_intent(user_input, user_name):
         ]
         is_complete = any(_re.search(kw, ui) for kw in complete_keywords) and any(tw in ui for tw in task_words)
         if is_complete:
+            # ★ 提取完成人（引号前的人名或"我"→当前用户）
+            completer = _extract_completer_name(ui, user_name)
             # ★ 引号精确匹配：用户用 '任务名' 或 "任务名" 指定了确切任务
             quoted = _extract_quoted(ui)
             if quoted:
-                return 'complete', {'keyword': quoted, 'user_name': user_name}
+                return 'complete', {'keyword': quoted, 'user_name': completer}
             # 正则提取任务关键词（省去AI调用，快1-2秒）
             kw = ui
             # 去掉完成相关的词和所有格代词（"我的"必须在"我"之前，否则"我"先被删会导致"的"裸奔）
             for remove in ['已经','了','完成','做好','搞定','写完','做完','提交','结束','办完','我的','你的','他的','她的','这个','那个','把']:
                 kw = kw.replace(remove, '')
             # 替换独立"我"/"你"为当前用户名（不直接删除，保留任务归属信息）
-            kw = kw.replace('我', user_name)
-            kw = kw.replace('你', user_name)
+            kw = kw.replace('我', completer)
+            kw = kw.replace('你', completer)
             # 去掉开头的虚词/助词（"的"/"了"/"吗"/"呢"等不能作为任务名的开头）
             kw = re.sub(r'^[的了吗呢啊着过吧嗯哦哈呀]+', '', kw)
             kw = kw.strip()[:30]
-            return 'complete', {'keyword': kw or ui[:30], 'user_name': user_name}
+            return 'complete', {'keyword': kw or ui[:30], 'user_name': completer}
 
     # ====== 第二优先级：闲聊检测 ======
     chat_patterns = [
@@ -372,6 +374,46 @@ def _extract_quoted(text):
         if m:
             return m.group(1).strip()
     return None
+
+
+def _extract_completer_name(text, current_user):
+    """
+    从"XX完成了/做完了/搞定了..."中提取完成人。
+    - "我完成了..." → current_user
+    - "张三完成了..." → 张三
+    - 提取不到 → current_user
+    """
+    # 找到完成动词的位置
+    m = re.search(r'(完成了|做好了|搞定了|写完了|做完了|提交了|结束了|办完了|弄完了|干完了|交完了|弄好了|写好了|办好了|做好了|干好了)'
+                  r'|(完成|做好|搞定|写完|做完|提交|结束|办完|弄完|干完|交完|弄好|写好|办好|做好|干好)\b',
+                  text)
+    if not m:
+        return current_user
+
+    before = text[:m.start()].strip()
+
+    # 剥离末尾的时间副词/语气词
+    adverbs = ['已经', '早就', '刚刚', '才', '终于', '今天', '昨天', '明天', '后天',
+               '上午', '下午', '晚上', '都', '就', '也', '全', '全部', '基本上']
+    changed = True
+    while changed:
+        changed = False
+        for adv in adverbs:
+            if before.endswith(adv):
+                before = before[:-len(adv)].strip()
+                changed = True
+
+    # 提取末尾 1-4 个非空字符作为人名候选
+    name_m = re.search(r'(\S{1,4})$', before)
+    if not name_m:
+        return current_user
+
+    name = name_m.group(1)
+    if name in ('我', '自己', '', '把', '将', '的', '了', '被', '让', '给', '和', '与'):
+        return current_user
+
+    name = re.sub(r'[的了]$', '', name)
+    return name if name else current_user
 
 
 # ====================================================================
@@ -1547,7 +1589,7 @@ def chat():
     if intent == 'complete':
         kw = intent_data.get('keyword', user_text[:20])
         tn = data.get('team_name', '默认小组')
-        un = data.get('user', '')
+        un = intent_data.get('user_name', data.get('user', ''))  # 优先用提取的完成人
         # 上下文解析："第一个任务" → 从上一轮回复中提取第1条
         ordinal_match = re.search(r'第\s*(\d+|[一二三四五六七八九十])\s*[个条]', user_text)
         if ordinal_match and context:
