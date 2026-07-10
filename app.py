@@ -1959,7 +1959,7 @@ def chat():
         if has_done and not has_plan and intent in ('add', 'query', 'update'):
             return True
         # 开头就是模糊词
-        if re.search(r'^(差不多|快点|还有|全都|刚好|马上|刚好)', ui) and intent in ('add', 'query'):
+        if re.search(r'(差不多|快点|还有|全都|刚好|马上|刚好)', ui) and intent in ('add', 'query') and len(ui.strip()) < 10:
             return True
         return False
 
