@@ -19,22 +19,24 @@ def log(s):
     log_lines.append(s)
 
 # ================================================================
-#  核心逻辑 —— 与 app.py route_intent 完全一致
+#  核心逻辑 —— 与 app.py 完全一致
 # ================================================================
 
 def _extract_quoted(text):
-    """提取 '' 或 "" 中的文本"""
     for pat in [r'"([^"]+)"', r"'([^']+)'", r'「([^」]+)」', r'『([^』]+)』']:
         m = re.search(pat, text)
         if m: return m.group(1).strip()
     return None
 
 def _extract_completer_name(text, current_user):
-    """从 XX完成了/做完了 中提取完成人"""
+    """从 XX完成了/做完了 中提取完成人。无明确人名 → current_user（宁可回退也不乱猜）"""
     m = re.search(
-        r'(?:完成了|做好了|搞定了|写完了|做完了|已提交|已搞定|'
-        r'提交了|结束了|办完了|办妥了|弄完了|干完了|交完了|'
-        r'弄好了|写好了|办好了|做好了|干好了)', text)
+        r'(完成了|做好了|搞定了|写完了|做完了|提交了|结束了|办完了|弄完了|干完了|交完了|'
+        r'弄好了|写好了|办好了|做好了|干好了|处理掉了|处理完了|修好了|修完了|完事了|'
+        r'交上去了|清掉了|搞完了)'
+        r'|(完成|做好|搞定|写完|做完|提交|结束|办完|弄完|干完|交完|弄好|写好|办好|做好|干好|'
+        r'处理掉|修好|完事|交上|清掉|搞完)\\b',
+        text)
     if not m: return current_user
     before = text[:m.start()].strip()
     adverbs = ['已经','早就','刚刚','才','终于','今天','昨天','明天','后天',
@@ -46,11 +48,27 @@ def _extract_completer_name(text, current_user):
             if before.endswith(adv):
                 before = before[:-len(adv)].strip()
                 changed = True
+    if not before: return current_user
     name_m = re.search(r'(\S{1,4})$', before)
     if not name_m: return current_user
     name = name_m.group(1)
     if name.endswith('我'): return current_user
     if name in ('我','自己','','把','将','的','了','被','让','给','和','与'):
+        return current_user
+    if len(name) == 1 and len(before) > 5: return current_user
+    measure_words = set('份张个条项次台套批件颗块段本支只双对群些点种类样位名间座辆艘架篇幅首篇封则门堂场遍趟回下顿阵')
+    if name[0] in measure_words: return current_user
+    if any(tw in name for tw in task_like): return current_user
+    task_like = ['报告','记录','数据','台账','工作票','操作票','通知','方案',
+                 '总结','报表','统计','分析','日志','测试','检查','检测',
+                 '巡检','演练','培训','审批','验收','整改','维修','维保',
+                 '工作','任务','试卷','作业','项目','文档','合同','预案',
+                 '简报','快报','季报','年报','月报','周报','日报','论文',
+                 '指标','评分','考核','反馈','隐患','事故','故障','调度',
+                 '票','单','表','书','稿','图','件','录','据']
+    if name in task_like: return current_user
+    common_surnames = set('王李张刘陈杨黄赵周吴徐孙马胡朱郭何罗高林郑梁谢唐许冯宋韩邓彭曹曾田董潘袁蔡蒋余于杜叶程魏苏吕丁任卢姚钟姜崔谭陆范汪廖石金贾韦夏傅方白邹孟熊秦邱江尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤')
+    if len(before) > 8 and len(name) >= 1 and name[0] not in common_surnames:
         return current_user
     name = re.sub(r'[的了]$', '', name)
     return name if name else current_user
@@ -58,7 +76,6 @@ def _extract_completer_name(text, current_user):
 def route_intent(user_input, user_name):
     ui = user_input.strip()
 
-    # ====== 第一优先级："完成"意图 ======
     plan_patterns = [
         '要.*做完','要.*完成','需要.*完成','得.*做完','必须.*完',
         '计划.*完','打算.*完','准备.*完','应该.*完','要求.*完',
@@ -79,7 +96,6 @@ def route_intent(user_input, user_name):
         task_words = [
             '任务','试卷','报告','作业','项目','工作','事情',
             '题目','文档','方案','计划书','报表','总结','汇报',
-            '设计','开发','测试','审查','检查','整理','编写',
             '日报','周报','月报','论文','代码','PPT','演示','合同',
             '申请','审批','会议','纪要','邮件','通知','公告',
             '翻译','调研','分析','评估','预算','报销','采购',
@@ -96,11 +112,8 @@ def route_intent(user_input, user_name):
             '反馈','统计','数据','指标','对标','考核表','评分',
             '季报','年报','快报','简报','通报','函','请示',
         ]
-        # 疑问式排除
-        q_re = r'(?:完了|好了|定了|交了|掉了)\s*(?:没有|了吗|没呢|没啊|没|不)\s*$'
-        if re.search(q_re, ui):
+        if re.search(r'(?:完了|好了|定了|交了|掉了)\s*(?:没有|了吗|没呢|没啊|没|不)\s*$', ui):
             return 'query', {'question': ui}
-
         ck_match = any(re.search(kw, ui) for kw in complete_keywords)
         tw_match = any(tw in ui for tw in task_words)
         if ck_match and (tw_match or bool(_extract_quoted(ui))):
@@ -116,7 +129,6 @@ def route_intent(user_input, user_name):
             kw = re.sub(r'^[的了吗呢啊着过吧嘿哦哈呀]+', '', kw).strip()[:30]
             return 'complete', {'keyword': kw or ui[:30], 'user_name': completer}
 
-    # ====== 第二优先级：闲聊 ======
     chat_patterns = [
         '你好','hi','hello','嗨','在吗','在不在','哈啰',
         '你是谁','你叫什么','你能做什么','你有什么功能','你会什么','你能干啥',
@@ -130,11 +142,9 @@ def route_intent(user_input, user_name):
     for p in chat_patterns:
         if p in ui: return 'chat', {}
 
-    # ====== 第三优先级：疑问词 ======
     if any(kw in ui for kw in ('吗','呢','什么','哪些','怎么','如何','谁','几个','多少')):
         return 'query', {'question': ui}
 
-    # ====== 第四优先级：更新 ======
     update_patterns = [
         '改到','推迟','提前','延期','改成','标记为','状态.*改','截止.*改',
         'deadline.*改','改成.*完成','标记.*完成','推到','推后','往后推',
@@ -142,11 +152,9 @@ def route_intent(user_input, user_name):
     if any(re.search(p, ui) for p in update_patterns):
         return 'update', {'search_condition': ui}
 
-    # ====== 第五优先级：删除 ======
     if any(kw in ui for kw in ('删掉','删除','清空','清除','去掉','移除','取消')):
         return 'delete', {'delete_condition': ui}
 
-    # ====== 默认：add ======
     return 'add', {}
 
 # ================================================================
@@ -221,11 +229,13 @@ failures = []
 for label, text, exp_intent, notes in TESTS:
     intent, data = route_intent(text, USER)
     kw = data.get('keyword', '') if intent == 'complete' else ''
+    uname = data.get('user_name', '') if intent == 'complete' else ''
     ok = (intent == exp_intent)
     status = 'OK' if ok else 'FAIL'
     log('[' + status + '] ' + label + ' [' + notes + ']')
     log('  输入: ' + text)
-    extra = (' | kw=' + kw[:50]) if kw else ''
+    extra = (' | kw=' + kw[:40]) if kw else ''
+    extra += (' | who=' + uname) if uname else ''
     log('  意图: ' + intent + ' (期望: ' + exp_intent + ')' + extra)
     if not ok:
         log('  *** 失败! 期望=' + exp_intent + ' 实际=' + intent)

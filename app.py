@@ -408,11 +408,11 @@ def _extract_completer_name(text, current_user):
     从"XX完成了/做完了/搞定了..."中提取完成人。
     - "我完成了..." → current_user
     - "张三完成了..." → 张三
-    - 提取不到 → current_user
+    - 无明确人名 → current_user（宁可回退也不乱猜）
     """
     # 找到完成动词的位置
-    m = re.search(r'(完成了|做好了|搞定了|写完了|做完了|提交了|结束了|办完了|弄完了|干完了|交完了|弄好了|写好了|办好了|做好了|干好了)'
-                  r'|(完成|做好|搞定|写完|做完|提交|结束|办完|弄完|干完|交完|弄好|写好|办好|做好|干好)\b',
+    m = re.search(r'(完成了|做好了|搞定了|写完了|做完了|提交了|结束了|办完了|弄完了|干完了|交完了|弄好了|写好了|办好了|做好了|干好了|处理掉了|处理完了|修好了|修完了|完事了|交上去了|清掉了|搞完了)'
+                  r'|(完成|做好|搞定|写完|做完|提交|结束|办完|弄完|干完|交完|弄好|写好|办好|做好|干好|处理掉|修好|完事|交上|清掉|搞完)\\b',
                   text)
     if not m:
         return current_user
@@ -430,18 +430,55 @@ def _extract_completer_name(text, current_user):
                 before = before[:-len(adv)].strip()
                 changed = True
 
-    # 提取末尾 1-4 个非空字符作为人名候选
+    # 无前置内容 → 默认当前用户
+    if not before:
+        return current_user
+
+    # 前置内容超过 8 个字 → 大概率是任务描述而非人名，谨慎处理
     name_m = re.search(r'(\S{1,4})$', before)
     if not name_m:
         return current_user
 
     name = name_m.group(1)
+
+    # ---- 排除明显不是人名的候选 ----
+
     # "我"结尾 → 当前用户（处理"操作票我"→"我"的情况）
     if name.endswith('我'):
         return current_user
+
+    # 黑名单：虚词、介词、标点残留
     if name in ('我', '自己', '', '把', '将', '的', '了', '被', '让', '给', '和', '与'):
         return current_user
 
+    # 单字且前面内容长 → 极大概率是任务描述尾字，不是人名
+    if len(name) == 1 and len(before) > 5:
+        return current_user
+
+    # 候选名是/包含任务关键词 → 是任务内容不是人名（先于量词检查）
+    task_like = ['报告', '记录', '数据', '台账', '工作票', '操作票', '通知', '方案',
+                 '总结', '报表', '统计', '分析', '日志', '测试', '检查', '检测',
+                 '巡检', '演练', '培训', '审批', '验收', '整改', '维修', '维保',
+                 '工作', '任务', '试卷', '作业', '项目', '文档', '合同', '预案',
+                 '简报', '快报', '季报', '年报', '月报', '周报', '日报', '论文',
+                 '指标', '评分', '考核', '反馈', '隐患', '事故', '故障', '调度',
+                 '票', '单', '表', '书', '稿', '图', '件', '录', '据']
+    if name in task_like or any(tw in name for tw in task_like):
+        return current_user
+
+    # 候选名以量词开头且首字非姓氏 → 是任务描述不是人名
+    # （"份工作票"→量词 + 名词；但"张"既是量词也是姓氏，不能一刀切）
+    common_surnames = set('王李张刘陈杨黄赵周吴徐孙马胡朱郭何罗高林郑梁谢唐许冯宋韩邓彭曹曾田董潘袁蔡蒋余于杜叶程魏苏吕丁任卢姚钟姜崔谭陆范汪廖石金贾韦夏傅方白邹孟熊秦邱江尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤')
+    if name[0] not in common_surnames:
+        measure_words = set('份个条项次台套批件颗块段本支只双对群些点种类样位名间座辆艘架篇幅首篇封则门堂场遍趟回下顿阵')
+        if name[0] in measure_words:
+            return current_user
+
+    # 前置内容太长（>8字）且候选名不在常见姓氏中 → 安全回退
+    if len(before) > 8 and len(name) >= 1 and name[0] not in common_surnames:
+        return current_user
+
+    # 清理尾部的"的"/"了"
     name = re.sub(r'[的了]$', '', name)
     return name if name else current_user
 
