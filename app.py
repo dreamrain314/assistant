@@ -270,6 +270,89 @@ def validate_deadline(deadline_str):
 
 
 # ====================================================================
+# 代词清洗：action 中不能出现"我"/"你"/"他"等代词
+# ====================================================================
+
+def _clean_action_pronouns(action_text, task_name):
+    """
+    Replace personal pronouns in task action text with actual names or remove them.
+    - "我"/"我的" → removed or replaced with task_name
+    - "你"/"你的" → removed or replaced with task_name
+    - "他"/"他的"/"她"/"她的" → removed or "其"
+    """
+    text = str(action_text or '')
+
+    # Remove possessive pronouns first
+    text = re.sub(r'我的', '', text)
+    text = re.sub(r'你的', '', text)
+    text = re.sub(r'他的', '', text)
+    text = re.sub(r'她的', '', text)
+    text = re.sub(r'其的', '', text)
+
+    # Replace subject pronouns with task owner's name
+    text = text.replace('我', task_name)
+    text = text.replace('你', task_name)
+
+    # "他"/"她" → "其" (gender-neutral when context unknown)
+    text = text.replace('他', '其')
+    text = text.replace('她', '其')
+
+    # Clean up: double spaces, trim, deduplicate consecutive task names
+    text = re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(r'(' + re.escape(task_name) + r')\s*\1', r'\1', text)
+
+    return text
+
+
+# ====================================================================
+# 多人检测：A和B/A、B/A与B 模式
+# ====================================================================
+
+def _extract_multi_names(text, current_user=''):
+    """
+    Detect multi-person patterns like 'A和B', 'A、B', 'A与B', 'A跟B'.
+    Resolves '我'/'自己' to current_user.
+    Returns list of names (length > 1) or None if no multi-person pattern found.
+    """
+    connectors = r'(?:和|与|跟|同|、|,|，)'
+    m = re.search(r'(\S{1,5})' + connectors + r'\s*(\S{1,5})', text)
+    if not m:
+        return None
+
+    names = []
+    for g in m.groups():
+        g = g.strip()
+        if g in ('我', '自己', ''):
+            names.append(current_user or '未知')
+        else:
+            g = re.sub(r'[的要了]$', '', g)
+            if g:
+                names.append(g)
+
+    # Check for a third person after the second match
+    rest = text[m.end():]
+    more = re.search(r'^\s*' + connectors + r'\s*(\S{1,5})', rest)
+    if more:
+        n = more.group(1).strip()
+        if n in ('我', '自己', ''):
+            names.append(current_user or '未知')
+        else:
+            n = re.sub(r'[的要了]$', '', n)
+            if n:
+                names.append(n)
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for n in names:
+        if n not in seen:
+            seen.add(n)
+            unique.append(n)
+
+    return unique if len(unique) > 1 else None
+
+
+# ====================================================================
 # 核心函数：AI 意图分类 + 数据提取（支持 add/query/delete/update）
 # ====================================================================
 
@@ -635,6 +718,7 @@ def do_add(user_text, name, action, status, deadline, is_public=True, assigned_t
                 if r.data: creator_id = r.data[0].get('id')
             except Exception: pass
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    action = _clean_action_pronouns(action, name)   # 清洗代词
     db.insert('records', {
         'name': name, 'action': action, 'status': status,
         'note': user_text, 'created_at': now, 'deadline': deadline,
@@ -656,7 +740,7 @@ def do_add(user_text, name, action, status, deadline, is_public=True, assigned_t
 
 def do_query(question, current_user='', team_name='默认小组'):
     """
-    查询流程：AI 生成 SQL → 执行 → 超时检测 → 口语化。
+    查询流程：AI 生成 SQL → 注入 team_id → 执行 → 超时检测 → 口语化。
     current_user: 当前登录用户名
     team_name: 当前小组名，用于数据隔离
     """
@@ -664,10 +748,16 @@ def do_query(question, current_user='', team_name='默认小组'):
     if not schema:
         return {'error': '数据库中没有表'}, 500
 
+    # 强制校验小组存在（防止数据泄露到其他小组）
+    team = db.get_team(team_name)
+    if not team:
+        return {'error': f'小组「{team_name}」不存在，请联系管理员创建小组后再查询'}, 400
+    team_id = team['id']
+
     now = datetime.now()
     current_datetime_str = now.strftime('%Y-%m-%d %H:%M')
 
-    # 构建身份提示
+    # 构建身份提示（含 team_id 强制过滤）
     user_hint = ""
     if current_user:
         user_hint = f"""
@@ -688,17 +778,21 @@ def do_query(question, current_user='', team_name='默认小组'):
 - action: 任务描述
 - is_public: 1=公共任务(所有人可见), 0=指定人员任务
 - assigned_to: 指定人员列表(逗号分隔)
+- team_id: 小组ID，当前小组 team_id={team_id}
 {user_hint}
 当前时间：{current_datetime_str}
 
+⚠️ 数据隔离规则（最高优先级，违反即为错误）：
+所有查询必须包含 WHERE team_id={team_id}，这是强制要求！
+
 查询规则：
 1. "今天有哪些任务"/"今天要做什么" → 查所有未完成任务
-2. "我还有什么任务"/"我的任务"/"我未完成的" → WHERE status!='已完成' AND (name='{current_user}' OR is_public=1 OR assigned_to LIKE '%{current_user}%')
-3. "今天有哪些任务到期" → WHERE date(deadline) = date('now')
-4. "明天有哪些" → WHERE date(deadline) = date('now', '+1 day')
-5. "XX任务在哪一天/截止时间是什么" → SELECT action, deadline FROM records WHERE action LIKE '%XX%'
-6. "这周有什么" → WHERE deadline >= date('now') AND deadline < date('now', '+7 days')
-7. "所有未完成" → WHERE status != '已完成'
+2. "我还有什么任务"/"我的任务"/"我未完成的" → WHERE team_id={team_id} AND status!='已完成' AND (name='{current_user}' OR is_public=1 OR assigned_to LIKE '%{current_user}%')
+3. "今天有哪些任务到期" → WHERE team_id={team_id} AND date(deadline) = date('now')
+4. "明天有哪些" → WHERE team_id={team_id} AND date(deadline) = date('now', '+1 day')
+5. "XX任务在哪一天/截止时间是什么" → SELECT action, deadline FROM records WHERE team_id={team_id} AND action LIKE '%XX%'
+6. "这周有什么" → WHERE team_id={team_id} AND deadline >= date('now') AND deadline < date('now', '+7 days')
+7. "所有未完成" → WHERE team_id={team_id} AND status != '已完成'
 8. 找特定任务时优先用 LIKE '%关键词%' 而不是 =
 9. 如果用户用了"我"但没有指明具体人名，就用 {current_user or '?'} 作为 name 条件
 
@@ -717,19 +811,24 @@ def do_query(question, current_user='', team_name='默认小组'):
     if not sql_query.upper().startswith('SELECT'):
         return {'error': '生成的查询不是SELECT语句，已拒绝执行'}, 400
 
-    # 第二步：执行
+    # 第二步：注入 team_id（兜底：AI 可能遗漏）
+    if f'team_id={team_id}' not in sql_query and 'team_id =' not in sql_query:
+        if 'WHERE' in sql_query.upper():
+            # 在第一个 WHERE 后插入 team_id 条件
+            sql_query = re.sub(r'(WHERE\s+)', rf'\1team_id={team_id} AND ', sql_query, count=1, flags=re.IGNORECASE)
+        else:
+            sql_query = sql_query.replace('FROM records', f'FROM records WHERE team_id={team_id}')
+
+    # 第三步：执行
     try:
         rows, col_names = db.query(sql_query)
     except Exception as e:
         return {'error': f'执行SQL出错: {str(e)}'}, 500
 
-    # 数据隔离：按 team_id 过滤 + 可见性过滤
-    if team_name and rows:
-        team = db.get_team(team_name)
-        if team and 'team_id' in col_names:
-            tid = team['id']
-            tidx = col_names.index('team_id')
-            rows = [r for r in rows if r[tidx] == tid]
+    # 数据隔离：按 team_id 二次过滤（兜底保护，防止 _supabase_select 丢弃条件）
+    if rows and 'team_id' in col_names:
+        tidx = col_names.index('team_id')
+        rows = [r for r in rows if r[tidx] == team_id]
     # 可见性过滤：只显示自己的 + 全体 + 分配到的
     # 但如果用户明确问了别人（如"小龙有什么任务"），显示那个人的
     target_user = current_user
@@ -1330,6 +1429,18 @@ def chat():
         return jsonify({'error': 'text 不能为空'}), 400
     team_name = data.get('team_name', '默认小组')
 
+    # ---- 多任务检测：一次只能处理一个任务 ----
+    multitask_warning = ''
+    _segments = re.split(r'[。！？；\n]+', user_text)
+    _segments = [s.strip() for s in _segments if len(s.strip()) >= 5]
+    if len(_segments) > 1:
+        _task_re = re.compile(r'[一-鿿]{1,4}(要|需要|必须|得|想|应该|计划|打算|准备|今天|明天|后天|这周|下周)')
+        _task_count = sum(1 for s in _segments if _task_re.search(s))
+        if _task_count >= 2:
+            multitask_warning = '⚠️ 你一口气说了多个任务，我一次只能处理一个问题，请一个一个慢慢来～\n我现在只处理第一个：\n\n'
+            user_text = _segments[0]
+    # ---- 多任务检测结束 ----
+
     # 获取上一轮 AI 回复作为上下文
     context = data.get('context', '')
 
@@ -1340,7 +1451,11 @@ def chat():
         op = pending_ops[dedup_op_id]
         if op.get('type') == 'dedup_add':
             user_choice = user_text.strip()
-            if user_choice in ('1', '更新'):
+            # 自然语言匹配：接受"是"/"对"/"更新"/"同一个"等
+            is_yes = (user_choice in ('1', '更新', '是', '对', '是的', '对的', '嗯', '好', '可以', '行',
+                                       '是同一个', '同一个', '一样的', '一样', '相同') or
+                      (len(user_choice) <= 6 and ('更新' in user_choice or '改' in user_choice)))
+            if is_yes:
                 # 更新已有任务
                 t = op['existing_task']
                 tid = t.get('id')
@@ -1356,7 +1471,11 @@ def chat():
                     f"已更新「{t.get('action','')}」的信息。一句话确认。{OUTPUT_FORMAT_RULE}")
                 pending_ops.pop(dedup_op_id)
                 return jsonify({'result': reply or f"已更新「{t.get('action','')}」", 'intent': 'add'})
-            elif user_choice in ('2', '新建', '创建'):
+            is_no = (user_choice in ('2', '新建', '创建', '不是', '不对', '不一样', '不同', '不不',
+                                      '不是同一个', '新的', '新任务') or
+                     (len(user_choice) <= 4 and user_choice.startswith('不')) or
+                     ('新建' in user_choice) or ('创建' in user_choice) or ('新的' in user_choice))
+            if is_no:
                 # 创建全新任务
                 result = do_add(op.get('new_text', user_text),
                     op.get('new_name', '未知'), op.get('new_action', user_text),
@@ -1366,7 +1485,7 @@ def chat():
                 return jsonify(result)
             else:
                 # 无法识别 → 提示用户
-                return jsonify({'result': '请回复数字 1（更新已有任务）或 2（创建新任务）。'})
+                return jsonify({'result': '我没太明白，这个是同一个任务吗？是就回复「是」，不是就回复「新建」。'})
 
     # ---- 处理 delete_select 序号选择 ----
     if dedup_op_id and dedup_op_id in pending_ops:
@@ -1534,8 +1653,21 @@ def chat():
         status = intent_data.get('status', '未完成')
         deadline = intent_data.get('deadline')
 
+        # ---- 代词清洗：action 中不能有"我"/"你"/"他" ----
+        action = _clean_action_pronouns(action, name)
+
+        # ---- 多人检测：A和B模式 → 为每人创建一条任务 ----
+        multi_names = _extract_multi_names(user_text, current_user)
+        if multi_names and len(multi_names) > 1:
+            msgs = []
+            for person_name in multi_names[:3]:
+                r = do_add(user_text, person_name, action, status, deadline,
+                           team_name=team_name, created_by=data.get('user',''))
+                msgs.append(r.get('result', ''))
+            result = {'intent': 'add', 'result': '\n'.join(msgs),
+                      'multi_person': True, 'names': multi_names[:3]}
         # ---- 场景A：用户说"XX已完成" → 直接更新已有任务 ----
-        if status == '已完成' and name != '未知':
+        elif status == '已完成' and name != '未知':
             task, method = _find_matching_task(name, action, team_name)
             if not task:
                 task, method = _find_matching_task(name, user_text[:20], team_name)
@@ -1573,9 +1705,15 @@ def chat():
                     'visibility': data.get('visibility', 'public'),
                     'assigned_to': data.get('assigned_to', [])
                 }
-                reply = ai_reply("你是友好的任务助理。用纯文本。",
-                    f"找到相似任务「{similar.get('action','')}」（状态：{similar.get('status','')}）。"
-                    f"你是想【1. 更新这条已有任务】还是【2. 创建一条全新的任务】？请回复数字1或2。{OUTPUT_FORMAT_RULE}")
+                reply = ai_reply(
+                    "你是友好的任务助理。用纯文本，口语化，像朋友聊天一样自然。禁止使用序号或「回复数字XX」。",
+                    f"系统中已有相似任务「{similar.get('action','')}」（状态：{similar.get('status','')}），"
+                    f"用户刚才想录入的任务是「{action}」。"
+                    f"请自然地反问用户这两个是不是同一个任务。"
+                    f"如果是同一个任务，建议更新已有的；如果不是，就新建。语气要自然友善。"
+                    f"暗示用户回复「是」或「不是」即可。{OUTPUT_FORMAT_RULE}",
+                    temperature=0.8, max_tokens=200
+                )
                 result = {'intent': 'add', 'result': reply or '找到相似任务，请选择操作。',
                           'needs_dedup_choice': True, 'pending_op_id': op_id}
             else:
@@ -1583,6 +1721,17 @@ def chat():
         else:
             result = do_add(user_text, name, action, status, deadline, team_name=team_name, created_by=data.get('user',''))
 
+    # 多任务警告前缀
+    if multitask_warning:
+        def _prepend(r):
+            if isinstance(r, dict) and 'result' in r:
+                r = dict(r)
+                r['result'] = multitask_warning + r['result']
+            return r
+        if isinstance(result, tuple):
+            result = (_prepend(result[0]), result[1])
+        elif isinstance(result, dict):
+            result = _prepend(result)
     if isinstance(result, tuple):
         return jsonify(result[0]), result[1]
     if isinstance(result, dict) and 'error' in result:

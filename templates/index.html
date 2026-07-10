@@ -389,9 +389,11 @@
             const picker = document.getElementById('userPicker');
             picker.innerHTML = '<span style="font-size:12px;color:#999;">加载人员列表...</span>';
             try {
-                const resp = await fetch(`/api/users?current_user=${encodeURIComponent(info.name)}&team_name=${encodeURIComponent(info.team_name||'默认小组')}`);
+                // 使用 /api/teams 获取成员列表（无需管理员权限）
+                const resp = await fetch(`/api/teams?team_name=${encodeURIComponent(info.team_name||'默认小组')}`);
                 if (!resp.ok) { picker.innerHTML = ''; return; }
-                const users = await resp.json();
+                const data = await resp.json();
+                const users = data.members || [];
                 // 默认选中当前用户
                 if (currentAssignedTo.length === 0) currentAssignedTo = [info.name];
                 picker.innerHTML = users.map(u => {

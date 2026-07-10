@@ -32,7 +32,24 @@ class DatabaseManager:
         self._seed_defaults()
 
     def _seed_defaults(self):
-        """确保默认用户存在 + 自动修复空密码哈希"""
+        """确保默认小组和默认用户存在 + 自动修复空密码哈希"""
+        # 先确保"默认小组"存在
+        try:
+            team_r = self.supabase.table('teams').select('id').eq('name', '默认小组').execute()
+            if team_r.data:
+                team_id = team_r.data[0]['id']
+            else:
+                team_r = self.supabase.table('teams').insert({'name': '默认小组', 'admin_name': '管理员'}).execute()
+                team_id = team_r.data[0]['id'] if team_r.data else None
+                print(f"[DB] 已创建默认小组, team_id={team_id}")
+        except Exception as e:
+            print(f"[DB] 默认小组初始化失败: {e}")
+            team_id = None
+
+        if not team_id:
+            print("[DB] 跳过用户初始化（无 team_id）")
+            return
+
         defaults = [
             ('管理员', True, True, True),
             ('张三', False, True, False),
@@ -40,7 +57,7 @@ class DatabaseManager:
         ]
         for name, is_admin, can_create, can_remind in defaults:
             try:
-                existing = self.supabase.table('users').select('*').eq('name', name).execute()
+                existing = self.supabase.table('users').select('*').eq('name', name).eq('team_id', team_id).execute()
                 pw = generate_password_hash('123456')
                 if not existing.data:
                     self.supabase.table('users').insert({
@@ -48,22 +65,23 @@ class DatabaseManager:
                         'can_create': can_create, 'can_remind': can_remind,
                         'password_hash': pw, 'team_id': team_id
                     }).execute()
-                    print(f"[DB] 已创建用户: {name}")
+                    print(f"[DB] 已创建用户: {name} (team_id={team_id})")
                 else:
                     u = existing.data[0]
                     updates = {}
                     if not u.get('password_hash'): updates['password_hash'] = pw
                     if not u.get('team_id'): updates['team_id'] = team_id
                     if updates:
-                        self.supabase.table('users').update(updates).eq('name', name).execute()
+                        self.supabase.table('users').update(updates).eq('name', name).eq('team_id', team_id).execute()
                         print(f"[DB] 已修复用户 {name}: {list(updates.keys())}")
             except Exception as e:
                 print(f"[DB] 初始化用户 {name} 失败: {e}")
 
-        # 迁移旧任务
+        # 迁移旧任务：给没有 team_id 的任务挂到默认小组
         try:
             self.supabase.table('records').update({'team_id': team_id}).is_('team_id', None).execute()
-        except Exception: pass
+        except Exception as e:
+            print(f"[DB] 迁移旧任务 team_id 失败: {e}")
 
     # ==================================================================
     # 核心 CRUD
@@ -99,7 +117,8 @@ class DatabaseManager:
         return """表名: records
 列: id (INTEGER), name (TEXT), action (TEXT), status (TEXT),
      note (TEXT), created_at (TEXT), deadline (TEXT),
-     user_id (TEXT), is_public (BOOLEAN), assigned_to (TEXT)
+     user_id (TEXT), is_public (BOOLEAN), assigned_to (TEXT),
+     team_id (INTEGER，用于数据隔离，每条记录必须属于一个小组)
 数据库: PostgreSQL (Supabase)
 日期函数: date(deadline) = CURRENT_DATE"""
 
