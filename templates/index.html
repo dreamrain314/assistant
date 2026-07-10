@@ -337,24 +337,42 @@
             const l = document.getElementById('loadingIndicator');
             if (l) { if (l._t) clearInterval(l._t); l.remove(); }
         }
+        let _abortController = null;  // 用于取消上一个未完成的请求
+        let _requestId = 0;           // 递增 ID，只处理最新请求的响应
+
         function setSending(v) { isLoading = v; sendBtn.disabled = v; sendBtn.textContent = v ? '处理中...' : '发送'; }
 
         async function sendMessage() {
-            if (isLoading) return;
             const text = msgInput.value.trim(); if (!text) return;
+
+            // ★ 防重复/竞态：取消上一个未完成的请求，以最新一次为准
+            if (_abortController) {
+                _abortController.abort();  // 取消上一个 fetch
+            }
+            _abortController = new AbortController();
+            const thisRequestId = ++_requestId;
+
+            // 如果当前有正在加载的 UI 状态，移除旧的 loading 指示器
+            hideLoading();
+            const oldLoading = document.querySelector('.loading');
+            if (oldLoading) oldLoading.remove();
+
             msgInput.value = ''; msgInput.style.height = 'auto';
             appendMessage(text, 'user');
 
-            // 统一走 /chat 端点（AI 自动判断意图：闲聊/录入/查询/更新/删除）
             showLoading(); setSending(true);
             try {
                 const resp = await fetch('/chat', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text, context: lastAiMessage, pending_op_id: pendingOpId, user: getUserInfo()?.name || '', team_name: getUserInfo()?.team_name || '默认小组', visibility: currentVisibility, assigned_to: currentAssignedTo })
+                    body: JSON.stringify({ text, context: lastAiMessage, pending_op_id: pendingOpId, user: getUserInfo()?.name || '', team_name: getUserInfo()?.team_name || '默认小组', visibility: currentVisibility, assigned_to: currentAssignedTo }),
+                    signal: _abortController.signal
                 });
+                // ★ 只处理最新请求的响应，旧请求的响应直接丢弃
+                if (thisRequestId !== _requestId) return;
                 hideLoading(); setSending(false);
                 if (!resp.ok) { let em = `请求失败(${resp.status})`; try { const ed = await resp.json(); em = ed.error || em; } catch(e){} appendMessage('❌ '+em, 'ai'); return; }
                 const data = await resp.json();
+                if (thisRequestId !== _requestId) return;
                 const display = data.result || data.message || '处理完成。';
                 appendMessage(display, 'ai'); lastAiMessage = display;
                 if (data.pending_op_id) pendingOpId = data.pending_op_id;
@@ -364,9 +382,14 @@
                     w.textContent = `🔴 ${data.overdue_count} 个任务已超过截止时间，请尽快处理！`;
                     chatBox.appendChild(w); chatBox.scrollTop = chatBox.scrollHeight;
                 }
-            } catch(e) { hideLoading(); setSending(false); appendMessage('❌ 网络连接失败，请检查网络。', 'ai'); }
+            } catch(e) {
+                // AbortError 是主动取消，不需要报错
+                if (e.name === 'AbortError') return;
+                hideLoading(); setSending(false);
+                appendMessage('❌ 网络连接失败，请检查网络。', 'ai');
+            }
         }
-        function quickSend(text) { if (isLoading) return; msgInput.value = text; sendMessage(); }
+        function quickSend(text) { msgInput.value = text; sendMessage(); }
         sendBtn.addEventListener('click', sendMessage);
         msgInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
         msgInput.addEventListener('input', function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
