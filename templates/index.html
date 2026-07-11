@@ -143,9 +143,9 @@
 
     <!-- 快捷按钮 -->
     <div class="quick-buttons">
-        <button onclick="quickSend('显示所有未完成的任务')">📋 未完成</button>
-        <button onclick="quickSend('显示所有已完成的任务')">✅ 已完成</button>
-        <button onclick="quickSend('今天有哪些任务')">📅 今日任务</button>
+        <button onclick="quickShowTasks('uncompleted')">📋 未完成</button>
+        <button onclick="quickShowTasks('completed')">✅ 已完成</button>
+        <button onclick="quickShowTasks('today')">📅 今日任务</button>
         <button class="voice-btn" disabled title="语音输入即将上线">🎤 语音</button>
     </div>
 
@@ -390,6 +390,83 @@
             }
         }
         function quickSend(text) { msgInput.value = text; sendMessage(); }
+
+        // ★ 快捷按钮：直接调 API，不经过意图分类
+        async function quickShowTasks(mode) {
+            const info = getUserInfo();
+            if (!info) { showToast('请先登录'); return; }
+
+            // 在聊天区显示用户点击的按钮
+            const labels = { uncompleted: '📋 显示所有未完成的任务', completed: '✅ 显示所有已完成的任务', today: '📅 今天有哪些任务' };
+            appendMessage(labels[mode] || mode, 'user');
+
+            showLoading(); setSending(true);
+            try {
+                const team = encodeURIComponent(info.team_name || '默认小组');
+                const viewer = encodeURIComponent(info.name);
+                const resp = await fetch(`/api/tasks?viewer=${viewer}&team_name=${team}&sort=default`);
+                if (!resp.ok) throw new Error('请求失败');
+                let tasks = await resp.json();
+
+                // ---- 按模式过滤 ----
+                const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+                if (mode === 'uncompleted') {
+                    tasks = tasks.filter(t => t.status !== '已完成' && t.status !== '完成');
+                } else if (mode === 'completed') {
+                    tasks = tasks.filter(t => t.status === '已完成' || t.status === '完成');
+                } else if (mode === 'today') {
+                    tasks = tasks.filter(t => {
+                        if (!t.deadline) return false;
+                        return String(t.deadline).startsWith(todayStr);
+                    });
+                }
+
+                // ---- 格式化输出 ----
+                hideLoading(); setSending(false);
+                if (tasks.length === 0) {
+                    const msgs = { uncompleted: '🎉 没有未完成的任务，太棒了！', completed: '📭 还没有已完成的任务。', today: '📅 今天没有截止的任务。' };
+                    appendMessage(msgs[mode] || '没有找到任务。', 'ai');
+                    return;
+                }
+
+                // 排序：超时优先 → 未完成 → 已完成；同类内按 deadline 升序
+                const now = new Date();
+                tasks.sort((a, b) => {
+                    const aOver = a.is_overdue ? 0 : 1;
+                    const bOver = b.is_overdue ? 0 : 1;
+                    if (aOver !== bOver) return aOver - bOver;
+                    return (a.deadline || '9999') < (b.deadline || '9999') ? -1 : 1;
+                });
+
+                const total = tasks.length;
+                const overdue = tasks.filter(t => t.is_overdue).length;
+                let lines = [];
+                if (mode === 'completed') {
+                    lines.push(`共有 ${total} 个已完成的任务：`);
+                    lines.push('');
+                } else {
+                    lines.push(`共有 ${total} 个任务：`);
+                    if (overdue > 0) lines.push(`⚠️ 有 ${overdue} 条任务已超时！`);
+                    lines.push('');
+                }
+                tasks.forEach((t, i) => {
+                    const who = t.name || '?';
+                    const what = t.action || '?';
+                    const dl = t.deadline || '无截止';
+                    const done = (t.status === '已完成' || t.status === '完成');
+                    let line = `${i + 1}. ${who}：${what}（截止：${dl}）`;
+                    if (done) line += ' 已完成';
+                    if (t.is_overdue) line += ' 【已超时】';
+                    lines.push(line);
+                });
+                appendMessage(lines.join('\n'), 'ai');
+
+            } catch (e) {
+                hideLoading(); setSending(false);
+                appendMessage('❌ 加载失败，请检查网络。', 'ai');
+            }
+        }
+
         sendBtn.addEventListener('click', sendMessage);
         msgInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
         msgInput.addEventListener('input', function() { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });

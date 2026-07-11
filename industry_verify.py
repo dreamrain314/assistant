@@ -58,7 +58,6 @@ def _extract_completer_name(text, current_user):
     if len(name) == 1 and len(before) > 5: return current_user
     measure_words = set('份张个条项次台套批件颗块段本支只双对群些点种类样位名间座辆艘架篇幅首篇封则门堂场遍趟回下顿阵')
     if name[0] in measure_words: return current_user
-    if any(tw in name for tw in task_like): return current_user
     task_like = ['报告','记录','数据','台账','工作票','操作票','通知','方案',
                  '总结','报表','统计','分析','日志','测试','检查','检测',
                  '巡检','演练','培训','审批','验收','整改','维修','维保',
