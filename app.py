@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import json
+import os
 import re
 import socket
 import requests as http_requests
@@ -21,7 +22,9 @@ app = Flask(__name__)
 pending_ops = {}
 
 # ================= 配置 DeepSeek =================
-DEEPSEEK_API_KEY = "REMOVED_DEEPSEEK_KEY"
+DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
+if not DEEPSEEK_API_KEY:
+    raise RuntimeError("未配置 DEEPSEEK_API_KEY，请检查 .env 文件")
 client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com/v1")
 
 
